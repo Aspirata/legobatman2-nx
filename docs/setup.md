@@ -2,6 +2,11 @@
 
 ## Сейчас
 
+Текущее окружение и проверенные команды: [dependencies.md](research/dependencies.md).
+Host SDK/Clang/CMake/Ninja уже работают из локальной папки; системные установки
+запрещены пользователем. Сборка: `./tools/build-host.ps1`. Switch toolchain ещё
+не подготовлен. Ниже сохранён снимок первоначального исследования, до реализации.
+
 На машине проверены Python 3.13 и Git. CMake, Ninja, Clang, ReXGlue, devkitA64,
 uam, DXC, SPIRV-Cross, Docker и Podman не найдены в PATH; DEVKITPRO не задан.
 `wsl --list --quiet` сообщает, что WSL не установлен. Это снимок 2026-11-13;
@@ -45,5 +50,5 @@ git -C third_party/<name> rev-parse HEAD
 
 Сгенерированный C++, shader packages, XEX, ISO, игровые архивы и дампы исключены из Git.
 `.gitignore` — удобство, а не проверка содержимого: перед публикацией просмотреть список
-добавляемых файлов. В этом репозитории нет команды сборки игры, пока не подключён SDK
-и не сформирован настоящий manifest по файлу LB2.
+добавляемых файлов. Текущий host manifest находится в `port/legobatman2_manifest.toml`;
+его нельзя смешивать с другой версией runtime без проверки ABI и регенерации.

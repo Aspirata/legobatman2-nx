@@ -22,6 +22,20 @@ def sha(path):
         return hashlib.file_digest(stream, 'sha256').hexdigest()
 
 
+def tree_digest(directory):
+    digest = hashlib.sha256()
+    for path in sorted(directory.rglob('*')):
+        if path.is_file():
+            digest.update(path.relative_to(directory).as_posix().encode('utf-8') + b'\0')
+            digest.update(bytes.fromhex(sha(path)))
+    return digest.hexdigest()
+
+
+def verify_tree(directory, expected):
+    if not directory.is_dir() or tree_digest(directory) != expected:
+        raise ValueError(f'Compiler builtin headers are changed or incomplete: {directory}')
+
+
 def fetch(url, name, expected):
     target = TOOLS/name
     if not target.exists():
@@ -65,9 +79,14 @@ def extract(archive, destination, prefix):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.parse_args()
+    parser.add_argument('--compiler-root', type=Path, default=Path('C:/Program Files/Windhawk/Compiler'))
+    args = parser.parse_args()
     try:
         TOOLS.mkdir(parents=True, exist_ok=True)
+        sdk = json.loads((ROOT/'toolchain-lock.json').read_text(encoding='utf-8'))['host_baseline']
+        archive = fetch(sdk['url'], sdk['url'].rsplit('/', 1)[1], sdk['archive_sha256'])
+        extract(archive, TOOLS/'rexglue-0.10.0', 'win-amd64/')
+        print('Verified: ReXGlue host v0.10.0')
         packages = json.loads((ROOT/'config/host-msvc-packages.json').read_text(encoding='utf-8'))
         for package in packages:
             for payload in package['payloads']:
@@ -81,6 +100,32 @@ def main():
             archive = fetch(f'https://api.nuget.org/v3-flatcontainer/{package}/{sdk_version}/{package}.{sdk_version}.nupkg', name, expected)
             extract(archive, TOOLS/'winsdk', 'c/')
             print('Verified:', package)
+        compiler = TOOLS/'clang-cl'
+        compiler.mkdir(exist_ok=True)
+        sources = {
+            'clang-cl.exe': args.compiler_root/'bin/clang-20.exe',
+            **{name: args.compiler_root/'bin'/name for name in
+               ('libclang-cpp.dll', 'libLLVM-20.dll', 'libc++.dll', 'libunwind.dll')},
+            'libwinpthread-1.dll': args.compiler_root/'i686-w64-mingw32/bin/libwinpthread-1.dll',
+        }
+        identity = json.loads((ROOT/'config/host-compiler.json').read_text(encoding='utf-8'))
+        for name, source in sources.items():
+            if sha(source) != identity['files'][name]:
+                raise ValueError(f'Unsupported compiler component: {name}')
+        verify_tree(args.compiler_root/'lib/clang/20/include', identity['builtin_headers_sha256'])
+        for name, source in sources.items():
+            target = compiler/name
+            if target.exists():
+                if sha(target) != sha(source):
+                    raise ValueError(f'Existing compiler differs: {name}')
+            else:
+                shutil.copy2(source, target)
+        builtins = TOOLS/'lib/clang/20/include'
+        if not builtins.exists():
+            builtins.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copytree(args.compiler_root/'lib/clang/20/include', builtins)
+        verify_tree(builtins, identity['builtin_headers_sha256'])
+        print('Prepared local clang-cl and builtin headers')
         return 0
     except (OSError, ValueError, zipfile.BadZipFile) as error:
         print(f'error: {error}', file=sys.stderr)

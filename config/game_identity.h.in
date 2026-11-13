@@ -1,0 +1,2 @@
+#pragma once
+inline constexpr const char* LB2_XEX_SHA256 = "@LB2_XEX_SHA256@";

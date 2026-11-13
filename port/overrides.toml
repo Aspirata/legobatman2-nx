@@ -12,3 +12,5 @@ non_argument_as_local = false
 # Leaf entered by three observed tail branches; two return paths, no frame/calls.
 # Full evidence: docs/research/function-evidence.md.
 "0x826B6AB8" = { size = 0x19C }
+# Observed virtual call on first host execution, rdata slot 0x8218BE1C.
+"0x82B071A8" = { size = 0xF4 }

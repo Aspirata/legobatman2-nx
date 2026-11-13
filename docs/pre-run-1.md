@@ -80,3 +80,24 @@
   Read-only проверка подтвердила atmosphere/bootloader/switch и 26,2 GB
   свободного места. Никаких записей на SD не выполнялось. Hekate mass storage
   не даёт автоматически запустить NRO: запуск потребуется проверить на консоли.
+- Этап 5, host launcher: `CMakeLists.txt`, `src/main.cpp`, SHA-256 guard до
+  ConstructRuntime, явный xenos plugin, строгое имя Default.xex, запрет TU.
+  Команда `./tools/build-host.ps1` завершилась успешной компиляцией/линковкой;
+  CTest host_identity 1/1 (known vector, mismatch, missing, неизменность файла).
+  Windows host guest code использует SSE4.1, /Od, без fast-math и FP contraction.
+  Все 24 Python-теста проходят. EXE: build/host/legobatman2.exe (106 969 088 байт
+  до последующих изменений; точную версию определять хешем конкретного файла).
+- Первый host-run без GPU выявил runtime target 0x82B071A8; после исследования
+  добавлена граница 0xF4. Новая сборка с GPU прошла этот вызов, инициализировала
+  interrupt callback, audio endpoint 48 kHz stereo и обратилась к архивам.
+  Журнал: work/analysis/host-with-gpu.log. Exit 0xC0000409 от намеренного fatal
+  dispatcher: следующий незарегистрированный метод 0x82B08598. Меню не достигнуто.
+  Отсутствующие PATCH.DAT/GAME3..GAME10 не подменяются фиктивными файлами;
+  сначала нужно отличить enumeration дополнительных архивов от обязательного чтения.
+  Следующий эксперимент: таблица указателей и control flow 0x82B08598.
+- Review host milestone: исправлены два Important замечания — app-local
+  MSVC runtime closure (4 DLL) и pin SHA-256 compiler/DLL/builtin headers.
+  Проверены bootstrap, повторная сборка, 25 Python tests, CTest 1/1; helper-test
+  проходит с PATH только Windows/System32. Minor deferred: автоматическая
+  проверка rejection именно launcher (пока CTest покрывает helper, успешный
+  hash guard и запуск runtime проверены реальным запуском).

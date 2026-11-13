@@ -30,11 +30,18 @@ bootstrap сверяет каждый архив до извлечения и н
 Для оболочки сборки: `. ./tools/host-env.ps1`. Найденный Clang использовался
 с `--no-default-config --target=x86_64-pc-windows-msvc`.
 
-Windhawk LLD скопирован локально под именем lld-link.exe вместе с libLLVM-20.dll,
-libc++.dll, libunwind.dll из bin и libwinpthread-1.dll из i686-w64-mingw32/bin.
-Из-за отказа Clang запускать linker используется прямой вызов LLD в CMake rule;
-ABI проверяется компиляцией объекта, а линковка — самостоятельным sample.
-Не задавать CMAKE_CXX_COMPILER_WORKS как замену реальной проверке.
+bootstrap также создаёт локальный clang-cl.exe из найденного clang-20.exe,
+копирует DLL-зависимости и builtin headers. Это MSVC command-line frontend того
+же Clang 20.1.3. С ним CMake непосредственно запускает Microsoft linker;
+нестандартные link rules больше не нужны. ABI/feature checks выполняются
+обычным configure. Не задавать CMAKE_CXX_COMPILER_WORKS вместо реальной проверки.
+
+Сборка приложения и тестов: `./tools/build-host.ps1 -Jobs 4`. Первое успешное
+чистое построение из root проекта: clang-cl x64, Microsoft link, 169 шагов,
+CTest 1/1. Windows CPU baseline SSE4.1 соответствует SDK. Без этого флага SIMDe
+уходил в fallback __builtin_roundevenf, отсутствующий в Windows CRT; настройка
+таргета исправлена без замены математики/guest функций. /Od задан для guest code,
+производительность этой версии не оценивается.
 
 Sample: `work/analysis/runtime_sample.cpp`, object/exe и журналы локальны.
 Он создаёт Runtime, передаёт InitializeKernel, tool_mode=true, вызывает Setup,

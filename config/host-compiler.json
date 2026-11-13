@@ -1,0 +1,13 @@
+{
+  "version": "20.1.3",
+  "origin": "Existing Windhawk LLVM-MinGW distribution",
+  "files": {
+    "clang-cl.exe": "561ff01e5cbc1da2e1999b40038b8f39d19b92be5afcf592ca64858fea74f9a2",
+    "libclang-cpp.dll": "cc58a548309e769a743504d53f5c146d3c5c02f9b76bcdad53fb76cfe401b818",
+    "libLLVM-20.dll": "91be76e8274120dfa2dec2b6c200266af86d1b227445e22d960da1bd5c3a8cb3",
+    "libc++.dll": "b424b81b43b8358a5094adb9e4a324a646aebebfad0e4362eb8ed1a4cb49a41a",
+    "libunwind.dll": "f48eaae7c06622b81b55ffa09338af4b7778121847f2f9bf1f0e6cef32d8695e",
+    "libwinpthread-1.dll": "a529e188ca0c121cb46e926d7ba408a139de83fa6364c0f77d2ef98e02e6ac28"
+  },
+  "builtin_headers_sha256": "22ffeacc9ce20d9d1d0d8bd57b6738b155dabb743f1e0e8925b797fe9d7db8cf"
+}

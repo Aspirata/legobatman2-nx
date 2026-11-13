@@ -10,6 +10,21 @@ bootstrap = importlib.util.module_from_spec(spec)
 
 
 class HostArchiveTests(unittest.TestCase):
+    def test_detects_changed_or_incomplete_compiler_headers(self):
+        spec.loader.exec_module(bootstrap)
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            header = root/'example.h'
+            header.write_bytes(b'original')
+            expected = bootstrap.tree_digest(root)
+            bootstrap.verify_tree(root, expected)
+            header.write_bytes(b'changed')
+            with self.assertRaises(ValueError):
+                bootstrap.verify_tree(root, expected)
+            header.unlink()
+            with self.assertRaises(ValueError):
+                bootstrap.verify_tree(root, expected)
+
     def test_rejects_traversal_inside_selected_prefix(self):
         spec.loader.exec_module(bootstrap)
         with tempfile.TemporaryDirectory() as temp:
