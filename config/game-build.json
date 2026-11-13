@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "name": "LEGO Batman 2: DC Super Heroes",
+  "iso_size_bytes": 8738846720,
+  "iso_sha256": "3ae6046129958bee81ff0e3abf403ecc42185760674a91af089b3ced4d488ed0",
+  "xex_path": "Default.xex",
+  "xex_sha256": "f13277b2645a24132f11cb45068de5692cae35fa57077c4801d622623421b68a",
+  "title_id": "57520817",
+  "media_id": "1BF17B45",
+  "entry_point": "0x82B577E0",
+  "image_base": "0x82000000"
+}
