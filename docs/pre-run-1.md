@@ -53,3 +53,20 @@
   Повторить: `python tools/prepare-game.py "<путь к ISO>"`. Полный manifest
   локально в `work/analysis/import.json`. `git check-ignore` подтвердил исключение
   XEX/DAT/manifest. PE ещё не загружен, игра не запускалась.
+- Host-проверка: переносимый официальный SDK v0.10.0 запускает CLI и loader.
+  Диагностический codegen без overrides нашёл 3 unresolved tail branches.
+  Исследование загруженного PE подтвердило одну отсутствующую границу функции;
+  `port/overrides.toml` добавляет только её. Codegen exit 0: 46 271 mappings,
+  159 recomp units, 325 файлов, 175 095 633 байт. Повтор с `--ignore-stamp`:
+  325 unchanged. Команда с проверкой хешей: `python tools/codegen.py --regenerate`.
+  21 синтетический тест проходит. Это промежуточный результат этапов 3–4;
+  полнота callbacks/ABI ещё не проверена, чекбоксы этих этапов остаются открыты.
+- Решение по порядку: пока настраивается portable compiler, официальный CLI
+  использован для диагностического анализа. Host-ready не объявлен до sample
+  compile/link. Официальный generator используется только со своим host runtime;
+  перед Horizon нужно проверить API и регенерировать тем же форком.
+- Найден Clang 20.1.3 в Windhawk. Его LLVM-MinGW libc++ не реализует требуемую
+  SDK `std::chrono::clock_time_conversion`: реальный compile probe остановился
+  в `rex/chrono/chrono.h`. SDK не патчился ради обхода. CMake 3.31.6 и Ninja
+  1.11.1.4 установлены только в `work/toolchain/python`. Следующий эксперимент:
+  совместимые MSVC headers/libs из официальных архивов, без установщика.

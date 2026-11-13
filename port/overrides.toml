@@ -1,0 +1,14 @@
+# Conservative baseline: no local-register optimization, direct-call rewrite or MSR skip.
+# Evidence is tied to config/game-build.json, never to LB1/SA2 addresses.
+skip_lr = false
+skip_msr = false
+ctr_as_local = false
+xer_as_local = false
+cr_as_local = false
+non_volatile_as_local = false
+non_argument_as_local = false
+
+[functions]
+# Leaf entered by three observed tail branches; two return paths, no frame/calls.
+# Full evidence: docs/research/function-evidence.md.
+"0x826B6AB8" = { size = 0x19C }

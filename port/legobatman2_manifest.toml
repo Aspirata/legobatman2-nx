@@ -1,0 +1,11 @@
+# Host baseline: official v0.10.0 generator + runtime, commit recorded in toolchain-lock.json.
+# Regenerate with the selected Horizon generator before switching runtime APIs.
+[project]
+name = "legobatman2"
+sdk_version = "0.10.0"
+game_root = "../game"
+
+[entrypoint]
+file_path = "../game/Default.xex"
+out_directory_path = "../generated/default"
+includes = ["overrides.toml"]
