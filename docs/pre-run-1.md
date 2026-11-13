@@ -70,3 +70,13 @@
   в `rex/chrono/chrono.h`. SDK не патчился ради обхода. CMake 3.31.6 и Ninja
   1.11.1.4 установлены только в `work/toolchain/python`. Следующий эксперимент:
   совместимые MSVC headers/libs из официальных архивов, без установщика.
+- Этап 2, host-ready: официальный MSVC/Windows SDK извлечён локально,
+  `runtime_sample.cpp` реально скомпилирован, слинкован и запущен: Setup=0,
+  process exit=0. Нужна app-local rexruntime.dll. Воспроизводимая загрузка
+  пакетов — tools/bootstrap-host.py, SHA-256 в config/host-msvc-packages.json.
+  24 теста проходят. Switch-ready остаётся открытым; devkitA64/deko3d/uam
+  ещё не получены. Подробности и лицензии в docs/research/dependencies.md.
+- Консоль: пользователь подключил SD через Hekate USB Tools, диск E:.
+  Read-only проверка подтвердила atmosphere/bootloader/switch и 26,2 GB
+  свободного места. Никаких записей на SD не выполнялось. Hekate mass storage
+  не даёт автоматически запустить NRO: запуск потребуется проверить на консоли.

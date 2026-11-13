@@ -16,6 +16,13 @@ def main():
     parser.add_argument('--manifest', type=Path, default=Path('work/analysis/import.json'))
     args = parser.parse_args()
     try:
+        image = args.image.resolve(strict=True)
+        destination = args.destination.resolve()
+        for output in (args.manifest, args.manifest.with_suffix('.json.tmp')):
+            resolved = output.resolve()
+            if (resolved == image or resolved.is_relative_to(destination)
+                    or (output.exists() and output.samefile(image))):
+                raise ValueError('Manifest must be outside the game root and cannot replace the input image.')
         manifest = extract_game(args.image, args.destination)
         config = json.loads((Path(__file__).resolve().parents[1] / 'config/game-build.json').read_text())
         for key in ('iso_sha256', 'iso_size_bytes'):
