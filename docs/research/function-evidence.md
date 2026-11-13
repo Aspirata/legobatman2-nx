@@ -120,3 +120,39 @@ Runtime target в host-callback-2.log, ссылка из `.rdata` по 0x8200650
 Frame/nonvolatile writes/linked calls нет. Не объявляется типом RTTI по
 соседним float-данным: доказательства здесь runtime target и разобранный CFG.
 Проверено: host-virtual-early.log проходит этот target, следующий — 0x825CB588.
+
+## 0x825CB588, размер 0xC
+
+Наблюдаемый virtual target в host-virtual-early.log. Слот `.rdata` по
+0x820E23A8 находится внутри таблицы методов. Три инструкции lis/addi/blr
+возвращают адрес строки в `.rdata` 0x820E23C4 (имя Sound_Start).
+После return 0x825CB590 идёт padding, следующий getter начинается по
+0x825CB598. Это полностью разобранная leaf-функция, не копия native getter;
+сохраняется оригинальная генерация C++.
+Host-name-getter.log прошёл getter, следующий virtual target 0x82788928.
+
+## 0x82788928, размер 0x28
+
+Dispatcher target в host-name-getter.log, pointer slot `.rdata` 0x82151210.
+Полный CFG: проверка поля 0x498(r4), затем маски поля 0xFC у найденного
+объекта; возвращает r3=0/1. Условный return 0x82788944 или return 0x8278894C.
+Внутренний переход направлен к 0x82788948, frame/calls/nonvolatile writes нет.
+Следующий пролог начинается по 0x82788950, размер 0x28 определён по return.
+Host-predicate.log проходит метод, следующий target — 0x82AA9AE8.
+
+## 0x82AA9AE8, размер 0x18
+
+Dispatcher target в host-predicate.log, `.rdata` slot 0x82185BE4. Все шесть
+инструкций проверены: сохраняет байт аргумента r4 в поле 6(r3), получает
+вложенный объект из 0x18(r3), загружает его virtual method offset 0x24 и
+выполняет tail bctr по 0x82AA9AFC. Следующий пролог начинается по 0x82AA9B00.
+Не трогает frame/nonvolatile registers; используется исходный guest-код.
+Host-forward-setter.log прошёл этот метод, следующий target — 0x82AAA168.
+
+## 0x82AAA168, размер 0x18
+
+Наблюдаемый target в host-forward-setter.log, `.rdata` slot 0x82185C64.
+Полностью разобранные 6 инструкций: byte store в 6(r3), переход к вложенному
+объекту в 0x20(r3), чтение его vtable slot 0x24 и tail bctr по 0x82AAA17C.
+Следующий отдельный метод начинается по 0x82AAA180. Nonvolatile/frame/calls нет.
+Сходство с предыдущим wrapper не использовалось вместо проверки этих байтов.

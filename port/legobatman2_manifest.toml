@@ -8,4 +8,4 @@ game_root = "../game"
 [entrypoint]
 file_path = "../game/Default.xex"
 out_directory_path = "../generated/default"
-includes = ["overrides.toml"]
+includes = ["verified_leaves.toml", "overrides.toml"]

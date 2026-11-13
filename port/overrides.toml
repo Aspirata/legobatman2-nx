@@ -24,3 +24,11 @@ non_argument_as_local = false
 "0x825BE648" = { size = 0x28 }
 # Observed virtual method, rdata slot 0x8200650C.
 "0x82242800" = { size = 0x28 }
+# Observed virtual name getter, rdata slot 0x820E23A8.
+"0x825CB588" = { size = 0xC }
+# Observed virtual predicate, rdata slot 0x82151210.
+"0x82788928" = { size = 0x28 }
+# Observed virtual forwarding setter, rdata slot 0x82185BE4.
+"0x82AA9AE8" = { size = 0x18 }
+# Observed forwarding setter of a separate object wrapper, slot 0x82185C64.
+"0x82AAA168" = { size = 0x18 }
