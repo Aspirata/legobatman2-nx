@@ -113,3 +113,19 @@
   пользователем http://127.0.0.1:10808, тот же результат. Прокси применяется
   к запросам, системные настройки не менялись. GitHub через прокси работает.
   Исследуется официальный portable MSYS2/pacman; ничего системно не установлено.
+- Покрытие callbacks: добавлены 0x825CB588, 0x82788928, 0x82AA9AE8,
+  0x82AAA168 с доказательствами и 55 статически проверенных constructor-backed
+  leaf-границ (docs/research/vtable-leaves.md). Отдельный reviewer проверил
+  байты/границы и опубликованные provenance rows; 5 сомнительных prefix entries
+  исключены. Не все 55 наблюдались на текущем маршруте. Новый host-run прошёл
+  прежние блокеры; следующий fatal — 0x82AAA180, work/analysis/host-reviewed-leaves.log.
+- Switch toolchain получен через in-app browser: обычные HTTP-клиенты получают
+  Cloudflare403, browser downloads работают. Восемь архивов (113 810 605 байт)
+  сверены с SHA-256 официальных индексов и проверены GPG по ключу
+  BC26F752D25B92CE272E0F44F7FD5492264BB9D0. Pin в config/switch-packages.json.
+  Распакованы только opt/devkitpro, package install scripts не запускались.
+- Собран отдельный deko3d clear/present/input NRO (не игра). ELF AArch64 ET_DYN,
+  NRO0 268 485 байт, uam скомпилировал свой shader в DKSH512. Сборка:
+  tools/build-switch-probe.ps1. SHA и маршрут — docs/validation/switch-toolchain-probe.md.
+  Проверка на Switch ещё ожидается. E: отключён: защита target остановила
+  копирование до создания папок/записи. Пользователю задан вопрос о подключении SD.

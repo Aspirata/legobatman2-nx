@@ -48,4 +48,28 @@ Sample: `work/analysis/runtime_sample.cpp`, object/exe и журналы лок�
 печатает `Runtime Setup: 00000000` и завершает exit 0. rexruntime.dll должен быть
 рядом с exe. Sample не выполняет гостевой код и не доказывает запуск игры.
 
-Switch toolchain и deko3d sample ещё не собраны. Host sample не закрывает эту часть.
+## Switch tools: локальная сборка проверена, устройство ожидается
+
+Восемь официальных пакетов закреплены в config/switch-packages.json:
+devkita64-gcc 16.1.0-1, binutils 2.46.0-1, newlib 4.6.0.20260123-4,
+rules 1.1.1-1, libnx 4.12.0-1, deko3d 0.5.0-1, switch-tools 1.13.1-1,
+uam 1.1.0-2. Windows host tools реально выполнили version/help.
+
+Основной сервер и зеркало отвечали Cloudflare403 из PowerShell/curl, в том
+числе через предоставленный прокси http://127.0.0.1:10808. Скачивание тех же
+точных URLs через in-app browser прошло. SHA-256 архивов совпали с индексами
+dkp-windows.db/dkp-libs.db. Все восемь GPG-подписей дали VALIDSIG для ключа
+BC26F752D25B92CE272E0F44F7FD5492264BB9D0 из официальной pacman-инструкции.
+Индексы, подписи и журналы — локально в work/toolchain/switch-packages и work/analysis.
+
+`python tools/setup-switch.py --archives <папка архивов>` проверяет весь набор
+до извлечения; копирует только opt/devkitpro в work/toolchain/switch-root.
+Никакие package-manager install scripts, Windows installer или registry edits
+не выполняются. Переменные DEVKITPRO/DEVKITA64 задаются только в процессе сборки.
+
+`./tools/build-switch-probe.ps1` собрал отдельный C++17 libnx/deko3d тест:
+ARM64 PIE ELF → NACP → NRO, плюс свой минимальный GLSL → DKSH через uam.
+Сценарий GPU/input описан в docs/validation/switch-toolchain-probe.md.
+Физический запуск ещё не проверен, поэтому Switch-ready целиком не закрыт.
+Стоковый uam проверяет инструменты; game shader translator и необходимые
+scheduling patches ещё не интегрированы. Horizon runtime также не собран.
