@@ -101,3 +101,15 @@
   проходит с PATH только Windows/System32. Minor deferred: автоматическая
   проверка rejection именно launcher (пока CTest покрывает helper, успешный
   hash guard и запуск runtime проверены реальным запуском).
+- Следующий этап coverage: восстановлены наблюдаемые virtual/callback targets
+  0x82B08598, 0x82B1F160, 0x82553C20, 0x825BE648, 0x82242800.
+  Для каждого проверены CFG/границы и источник pointer или code registration;
+  callback 0x82553C20 требует вход r10, register-local flags оставлены false.
+  Все пять пройдены реальными последовательными host-run после codegen/build.
+  Последний журнал: work/analysis/host-virtual-early.log; текущий fatal target
+  0x825CB588. Меню пока нет. 25 Python tests + CTest1/1 проходят.
+- Toolchain Switch: pkg.devkitpro.org и downloads.devkitpro.org отвечают
+  Cloudflare403 на index и direct package. Повторено через явно предоставленный
+  пользователем http://127.0.0.1:10808, тот же результат. Прокси применяется
+  к запросам, системные настройки не менялись. GitHub через прокси работает.
+  Исследуется официальный portable MSYS2/pacman; ничего системно не установлено.
