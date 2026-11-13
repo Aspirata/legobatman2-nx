@@ -1,0 +1,30 @@
+{
+  "checked_on": "2026-11-13",
+  "purpose": "Research snapshots, not an integrated dependency lockfile",
+  "repositories": [
+    {
+      "name": "legobatman-recomp",
+      "url": "https://github.com/surblazer/legobatman-recomp.git",
+      "commit": "dc4e3fa6312c72fbed18155dac3d8d9d1809611a",
+      "role": "TT engine research and PM4/deko3d reference"
+    },
+    {
+      "name": "sa2-nx",
+      "url": "https://github.com/ChanseyIsTheBest/sa2-nx.git",
+      "commit": "baf523b8e93a1b02d8b73d13aebf86780f8cc0c6",
+      "role": "Direct3D hooks, native deko3d renderer and differential verification reference"
+    },
+    {
+      "name": "rexglue-sdk",
+      "url": "https://github.com/rexglue/rexglue-sdk.git",
+      "commit": "546a082a4356173635f6c40510a41ff53e518b5a",
+      "role": "Host recompiler reference; not interchangeable with a patched Switch SDK"
+    }
+  ],
+  "legobatman_upstream_pins": {
+    "source": "third_party/legobatman-recomp/tools/setup.sh",
+    "nfsmw_nx": "20f8dc122bf0cd95211606ebacd3fda550cb21a8",
+    "uam": "5a5afc2bae8b55409ab36ba45be63fcb73f68993",
+    "note": "Require the upstream patches; these are not tested LEGO Batman 2 dependencies."
+  }
+}
