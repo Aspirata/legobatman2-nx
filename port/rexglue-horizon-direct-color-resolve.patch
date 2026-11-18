@@ -1,0 +1,131 @@
+--- a/src/graphics/vulkan/render_target_cache.cpp
++++ b/src/graphics/vulkan/render_target_cache.cpp
+@@ -73,6 +73,10 @@
+ #if REX_PLATFORM_SWITCH
+ #include <lb2_gpu_profile.h>
+ #include <lb2_stencil_copy.h>
++#include <lb2_direct_color.h>
++REXCVAR_DEFINE_BOOL(lb2_direct_color_resolve, false, "GPU/Vulkan",
++                    "Fuse fully owned1x RGBA8 host-image resolve to guest memory")
++    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+ REXCVAR_DEFINE_BOOL(lb2_stencil_copy, false, "GPU/Vulkan",
+                     "Guarded depth4x to depth1x stencil compute/copy trial")
+     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+@@ -994,6 +998,7 @@
+   const VkDevice device = vulkan_device->device();
+ #if REX_PLATFORM_SWITCH
+   Lb2ShutdownStencilCopy(vulkan_device);
++  Lb2ShutdownDirectColorResolve(vulkan_device);
+ #endif
+ 
+   // Destroy all render targets before the descriptor set pool is destroyed -
+@@ -1193,8 +1198,67 @@
+     if (copy_shader != draw_util::ResolveCopyShaderIndex::kUnknown) {
+       const draw_util::ResolveCopyShaderInfo& copy_shader_info =
+           draw_util::resolve_copy_shader_info[size_t(copy_shader)];
++#if REX_PLATFORM_SWITCH
++      VulkanRenderTarget* lb2_direct_source = nullptr;
++      Lb2DirectColorPush lb2_direct_push{};
++      if (REXCVAR_GET(lb2_direct_color_resolve) && GetPath() == Path::kHostRenderTargets) {
++        uint32_t lb2_base,lb2_row_used,lb2_rows,lb2_pitch;
++        resolve_info.GetCopyEdramTileSpan(lb2_base,lb2_row_used,lb2_rows,lb2_pitch);
++        GetResolveCopyRectanglesToDump(lb2_base,lb2_row_used,lb2_rows,lb2_pitch,dump_rectangles_);
++        bool lb2_accepted = false;
++        if (dump_rectangles_.size() == 1) {
++          const auto& rectangle = dump_rectangles_[0];
++          auto* source = static_cast<VulkanRenderTarget*>(rectangle.render_target);
++          const auto source_key = source->key();
++          lb2::direct_color::Request request;
++          request.host_path = true;
++          request.scale_one = !draw_resolution_scaled;
++          request.single_sample = source_key.msaa_samples == xenos::MsaaSamples::k1X &&
++              resolve_info.color_edram_info.msaa_samples == xenos::MsaaSamples::k1X;
++          request.rgba8_exact = !resolve_info.IsCopyingDepth() && !source_key.is_depth &&
++              source_key.GetColorFormat() == xenos::ColorRenderTargetFormat::k_8_8_8_8 &&
++              resolve_info.color_edram_info.format == uint32_t(xenos::ColorRenderTargetFormat::k_8_8_8_8) &&
++              resolve_info.copy_dest_info.copy_dest_format == xenos::ColorFormat::k_8_8_8_8 &&
++              copy_shader == draw_util::ResolveCopyShaderIndex::kFast32bpp1x2xMSAA;
++          // Unowned holes are omitted by the rectangle collector. Require its
++          // complete requested span, not merely one surviving source pointer.
++          request.full_owner = rectangle.row_first == 0 && rectangle.rows == lb2_rows &&
++              rectangle.row_first_start == 0 && rectangle.row_last_end == lb2_row_used;
++          request.plain_2d = !resolve_info.copy_dest_info.copy_dest_array &&
++              !resolve_info.copy_dest_info.copy_dest_slice;
++          request.sample_zero = resolve_info.copy_dest_coordinate_info.copy_sample_select ==
++              xenos::CopySampleSelect::k0;
++          request.no_bias = resolve_info.copy_dest_info.copy_dest_exp_bias == 0;
++          request.owner_base = source_key.base_tiles;
++          request.owner_pitch = source_key.GetPitchTiles();
++          request.owner_height = GetRenderTargetHeight(source_key.pitch_tiles_at_32bpp,source_key.msaa_samples);
++          request.resolve_base = resolve_info.color_edram_info.base_tiles;
++          request.resolve_pitch = lb2_pitch;
++          request.offset_x = resolve_info.coordinate_info.edram_offset_x_div_8 << 3;
++          request.offset_y = resolve_info.coordinate_info.edram_offset_y_div_8 << 3;
++          request.width = resolve_info.coordinate_info.width_div_8 << 3;
++          request.height = resolve_info.height_div_8 << 3;
++          request.dst_x = resolve_info.copy_dest_coordinate_info.offset_x_div_8 << 3;
++          request.dst_y = resolve_info.copy_dest_coordinate_info.offset_y_div_8 << 3;
++          request.dst_pitch = resolve_info.copy_dest_coordinate_info.pitch_aligned_div_32 << 5;
++          request.dst_range = uint64_t(resolve_info.copy_dest_extent_start-resolve_info.copy_dest_base) +
++              resolve_info.copy_dest_extent_length;
++          request.endian = uint32_t(resolve_info.copy_dest_info.copy_dest_endian);
++          request.swap = resolve_info.copy_dest_info.copy_dest_swap;
++          if (lb2::direct_color::MakePlan(request,lb2_direct_push) &&
++              Lb2PrepareDirectColorResolve(command_processor_,descriptor_set_layout_sampled_image_)) {
++            lb2_direct_source = source;
++            lb2_accepted = true;
++          }
++        }
++        Lb2DirectColorAttempt(lb2_accepted);
++      }
++#endif
+       bool direct_resolved = false;
+       if (GetPath() == Path::kHostRenderTargets) {
++#if REX_PLATFORM_SWITCH
++        if (!lb2_direct_source) {
++#endif
+         if (REXCVAR_GET(direct_host_resolve)) {
+           direct_resolved =
+               TryResolveCopyDirectly(resolve_info, copy_shader, draw_resolution_scaled);
+@@ -1217,6 +1281,9 @@
+             return false;
+           }
+         }
++#if REX_PLATFORM_SWITCH
++        }
++#endif
+       }
+ 
+       uint32_t copy_dest_range_unscaled = resolve_info.copy_dest_extent_start -
+@@ -1290,6 +1357,21 @@
+                               std::pair<uint32_t, uint32_t>(uint32_t(copy_dest_use_start),
+                                                             uint32_t(copy_dest_use_length)));
+           }
++#if REX_PLATFORM_SWITCH
++          if (lb2_direct_source) {
++            command_processor_.PushImageMemoryBarrier(lb2_direct_source->image(),
++                ui::vulkan::util::InitializeSubresourceRange(VK_IMAGE_ASPECT_COLOR_BIT),
++                lb2_direct_source->current_stage_mask(),VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
++                lb2_direct_source->current_access_mask(),VK_ACCESS_SHADER_READ_BIT,
++                lb2_direct_source->current_layout(),VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
++            lb2_direct_source->SetUsage(VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,VK_ACCESS_SHADER_READ_BIT,
++                                       VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
++            if (!RexSwitchPerfSkip(4)) {
++              Lb2RecordDirectColorResolve(command_processor_,lb2_direct_source->GetDescriptorSetTransferSource(),
++                                         descriptor_set_dest,lb2_direct_push);
++            }
++          } else {
++#endif
+           UseEdramBuffer(EdramBufferUsage::kComputeRead);
+           command_processor_.BindExternalComputePipeline(
+               resolve_copy_pipelines_[size_t(copy_shader)]);
+@@ -1318,6 +1400,9 @@
+           if (!RexSwitchPerfSkip(4))
+ #endif
+           command_buffer.CmdVkDispatch(copy_group_count_x, copy_group_count_y, 1);
++#if REX_PLATFORM_SWITCH
++          }
++#endif
+ 
+           // Invalidate textures and mark the range as scaled if needed.
+           texture_cache.MarkRangeAsResolved(resolve_info.copy_dest_extent_start,

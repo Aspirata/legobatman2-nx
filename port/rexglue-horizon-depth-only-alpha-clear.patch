@@ -1,0 +1,30 @@
+--- a/src/graphics/vulkan/command_processor.cpp
++++ b/src/graphics/vulkan/command_processor.cpp
+@@ -84,6 +84,9 @@
+ #include <lb2_depth_clear.h>
+ REXCVAR_DEFINE_BOOL(lb2_depth_clear_cutout, false, "GPU/Vulkan",
+                     "Defer fully overwritten480x480 depth/stencil imports with fallback replay")
++    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
++REXCVAR_DEFINE_BOOL(lb2_depth_clear_depth_only_alpha, false, "GPU/Vulkan",
++                    "Extend guarded clear imports to exact DepthOnly alpha state without a fragment stage")
+     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+ REXCVAR_DEFINE_BOOL(lb2_clear_trace, false, "GPU/Vulkan",
+                     "Bounded causal clear trace for GPU frames 180 and 280")
+@@ -3997,6 +4000,8 @@
+     s.has_ps=pixel_shader!=nullptr; s.memexport=memexport_writes_possible;
+     s.query=active_occlusion_query_.valid; s.rasterized=is_rasterization_done;
+     s.half_pixel_offset=REXCVAR_GET(half_pixel_offset);
++    s.allow_depth_only_alpha=REXCVAR_GET(lb2_depth_clear_depth_only_alpha);
++    s.edram_mode=regs[XE_GPU_REG_RB_MODECONTROL];
+     s.rectangle_draw=uint32_t(primitive_processing_result.host_primitive_type)==8 &&
+       primitive_processing_result.host_draw_vertex_count==3 &&
+       primitive_processing_result.index_buffer_type==PrimitiveProcessor::ProcessedIndexBufferType::kNone;
+@@ -4357,7 +4362,7 @@
+ #endif
+       deferred_command_buffer_.CmdVkDraw(primitive_processing_result.host_draw_vertex_count, 1, 0, 0);
+ #if REX_PLATFORM_SWITCH
+-      Lb2DepthClearDrawEmitted();
++      Lb2DepthClearDrawEmitted(!pipeline_is_placeholder);
+ #endif
+     }
+   } else {

@@ -1,0 +1,59 @@
+--- a/src/nouveau/horizon/nouveau_horizon_channel.c
++++ b/src/nouveau/horizon/nouveau_horizon_channel.c
+@@ -801,6 +801,18 @@
+    return NOUVEAU_HORIZON_SUCCESS;
+ }
+ 
++static uint32_t
++nouveau_horizon_channel_completion_reservation_entries(
++   const struct nouveau_horizon_channel *channel)
++{
++   /* submit_locked keeps FINAL_SKID after its completion tail, and may first
++    * prepend a total-order wait. Every public producer must preserve this
++    * headroom while accepting entries, not discover its absence at submit.
++    */
++   return (channel->mapped_completion_enabled ? 2u : 1u) +
++          (channel->device->total_order_channels ? 1u : 0u);
++}
++
+ static enum nouveau_horizon_status
+ nouveau_horizon_channel_append_locked(
+    struct nouveau_horizon_channel *channel,
+@@ -923,8 +935,16 @@
+          return NOUVEAU_HORIZON_ERROR_INVALID_ARGUMENT;
+    }
+ 
++   enum nouveau_horizon_status status;
++   if (!prepend) {
++      status = nouveau_horizon_channel_reserve_entries_locked(
++         channel, 1 + nouveau_horizon_channel_completion_reservation_entries(channel), 0);
++      if (status != NOUVEAU_HORIZON_SUCCESS)
++         return status;
++   }
++
+    uint32_t slice = 0;
+-   enum nouveau_horizon_status status =
++   status =
+       nouveau_horizon_channel_reserve_wait_slice_locked(
+          channel, prepend, &slice);
+    if (status != NOUVEAU_HORIZON_SUCCESS)
+@@ -1787,7 +1807,8 @@
+     * the following 3D no-op, as in deko3D's full barrier.
+     */
+    enum nouveau_horizon_status status =
+-      nouveau_horizon_channel_reserve_entries_locked(channel, 3, 0);
++      nouveau_horizon_channel_reserve_entries_locked(
++         channel, 3 + nouveau_horizon_channel_completion_reservation_entries(channel), 0);
+    if (status != NOUVEAU_HORIZON_SUCCESS)
+       goto done;
+ 
+@@ -1837,7 +1858,8 @@
+    const uint32_t acquire_entries = channel->cache_acquire_emitted ? 0 : 2;
+    enum nouveau_horizon_status status =
+       nouveau_horizon_channel_reserve_entries_locked(
+-         channel, exec_count + acquire_entries, 0);
++         channel, exec_count + acquire_entries +
++                     nouveau_horizon_channel_completion_reservation_entries(channel), 0);
+    if (status != NOUVEAU_HORIZON_SUCCESS)
+       goto done;
+ 

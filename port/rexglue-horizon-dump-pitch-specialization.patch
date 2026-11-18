@@ -1,0 +1,88 @@
+--- a/src/graphics/vulkan/render_target_cache.cpp
++++ b/src/graphics/vulkan/render_target_cache.cpp
+@@ -73,10 +73,15 @@
+ #if REX_PLATFORM_SWITCH
+ #include <lb2_gpu_profile.h>
+ #include <lb2_gpu_timestamps.h>
++#include <lb2_dump_pitch.h>
++#include <lb2_dump_pitch_shader.h>
+ #include <lb2_stencil_copy.h>
+ #include <lb2_direct_color.h>
+ REXCVAR_DEFINE_BOOL(lb2_direct_color_resolve, false, "GPU/Vulkan",
+                     "Fuse fully owned1x RGBA8 host-image resolve to guest memory")
++    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
++REXCVAR_DEFINE_BOOL(lb2_dump_pitch_specialization, false, "GPU/Vulkan",
++                    "Specialize EDRAM dump source pitch with exact integer addressing")
+     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+ REXCVAR_DEFINE_BOOL(lb2_stencil_copy, false, "GPU/Vulkan",
+                     "Guarded depth4x to depth1x stencil compute/copy trial")
+@@ -5662,6 +5667,17 @@
+   if (pipeline_it != dump_pipelines_.end()) {
+     return pipeline_it->second;
+   }
++#if REX_PLATFORM_SWITCH
++  if (lb2::dump_pitch::Pitch(key.key) &&
++      dump_pipelines_.size() >= lb2::dump_pitch::kSpecializationCacheLimit) {
++    // Admission belongs here: an entire invocation list may have been built
++    // before any of its new pipelines entered the cache. Always keep a generic
++    // dynamic-pitch fallback once the specialization budget is exhausted.
++    key.key = lb2::dump_pitch::BaseKey(key.key);
++    pipeline_it = dump_pipelines_.find(key);
++    if (pipeline_it != dump_pipelines_.end()) return pipeline_it->second;
++  }
++#endif
+ 
+   std::vector<spv::Id> id_vector_temp;
+ 
+@@ -5859,10 +5875,17 @@
+   spv::Id source_pitch_tiles =
+       builder.createTriOp(spv::OpBitFieldUExtract, type_uint, pitches_constant,
+                           const_edram_pitch_tiles_bits, const_edram_pitch_tiles_bits);
++#if REX_PLATFORM_SWITCH
++  const auto source_tile_coordinates = Lb2BuildDumpTileCoordinates(
++      builder, source_tile_index, source_pitch_tiles, lb2::dump_pitch::Pitch(key.key));
++  spv::Id source_tile_index_y = source_tile_coordinates.y;
++  spv::Id source_tile_index_x = source_tile_coordinates.x;
++#else
+   spv::Id source_tile_index_y =
+       builder.createBinOp(spv::OpUDiv, type_uint, source_tile_index, source_pitch_tiles);
+   spv::Id source_tile_index_x =
+       builder.createBinOp(spv::OpUMod, type_uint, source_tile_index, source_pitch_tiles);
++#endif
+   // Combine the source tile offset and the sample index within the tile.
+   spv::Id source_sample_x = builder.createBinOp(
+       spv::OpIAdd, type_uint,
+@@ -6258,11 +6281,22 @@
+     dump_pipeline_key.msaa_samples = render_target->key().msaa_samples;
+     dump_pipeline_key.resource_format = render_target->key().resource_format;
+     dump_pipeline_key.is_depth = render_target->key().is_depth;
++#if REX_PLATFORM_SWITCH
++    dump_pipeline_key.key = lb2::dump_pitch::MakeKey(
++        dump_pipeline_key.key, render_target->key().GetPitchTiles(),
++        REXCVAR_GET(lb2_dump_pitch_specialization));
++#endif
+     if (GetDumpPipeline(dump_pipeline_key) == VK_NULL_HANDLE) {
+       return false;
+     }
+     DirectResolvePipelineKey direct_pipeline_key;
+     direct_pipeline_key.dump_pipeline_key = dump_pipeline_key;
++#if REX_PLATFORM_SWITCH
++    // Pitch is a dump-only specialization; this preflight map aliases the
++    // existing resolve-copy pipeline and needs only the original format key.
++    direct_pipeline_key.dump_pipeline_key.key =
++        lb2::dump_pitch::BaseKey(direct_pipeline_key.dump_pipeline_key.key);
++#endif
+     direct_pipeline_key.copy_shader = copy_shader;
+     direct_pipeline_key.draw_resolution_scaled = draw_resolution_scaled;
+     if (GetDirectResolvePipeline(direct_pipeline_key) == VK_NULL_HANDLE) {
+@@ -6314,6 +6348,10 @@
+     pipeline_key.msaa_samples = rt_key.msaa_samples;
+     pipeline_key.resource_format = rt_key.resource_format;
+     pipeline_key.is_depth = rt_key.is_depth;
++#if REX_PLATFORM_SWITCH
++    pipeline_key.key = lb2::dump_pitch::MakeKey(
++        pipeline_key.key, rt_key.GetPitchTiles(), REXCVAR_GET(lb2_dump_pitch_specialization));
++#endif
+     dump_invocations_.emplace_back(rectangle, pipeline_key);
+   }
+ 

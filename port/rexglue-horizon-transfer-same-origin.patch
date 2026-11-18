@@ -1,0 +1,136 @@
+--- a/src/graphics/vulkan/render_target_cache.cpp
++++ b/src/graphics/vulkan/render_target_cache.cpp
+@@ -76,6 +76,8 @@
+ #include <lb2_dump_pitch.h>
+ #include <lb2_dump_pitch_shader.h>
+ #include <lb2_transfer_pitch.h>
++#include <lb2_transfer_same_origin.h>
++#include <lb2_transfer_same_origin_shader.h>
+ #include <lb2_stencil_copy.h>
+ #include <lb2_direct_color.h>
+ REXCVAR_DEFINE_BOOL(lb2_direct_color_resolve, false, "GPU/Vulkan",
+@@ -86,6 +88,9 @@
+     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+ REXCVAR_DEFINE_BOOL(lb2_transfer_pitch_specialization, false, "GPU/Vulkan",
+                     "Specialize ownership-transfer source pitch with exact integer addressing")
++    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
++REXCVAR_DEFINE_BOOL(lb2_transfer_same_origin, false, "GPU/Vulkan",
++                    "Use exact direct coordinates for bounded same-origin2x-to4x stencil transfers")
+     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+ REXCVAR_DEFINE_BOOL(lb2_stencil_copy, false, "GPU/Vulkan",
+                     "Guarded depth4x to depth1x stencil compute/copy trial")
+@@ -3183,25 +3188,36 @@
+       builder.createBinOp(spv::OpUMod, type_uint, source_tile_index, source_pitch_tiles);
+ #endif
+   // Finally calculate the source texture coordinates.
+-  spv::Id source_pixel_x_int = builder.createUnaryOp(
+-      spv::OpBitcast, type_int,
+-      builder.createBinOp(
+-          spv::OpIAdd, type_uint,
+-          builder.createBinOp(
+-              spv::OpIMul, type_uint,
+-              builder.makeUintConstant(tile_width_samples >> source_pixel_width_dwords_log2),
+-              source_tile_index_x),
+-          source_tile_pixel_x));
+-  spv::Id source_pixel_y_int = builder.createUnaryOp(
+-      spv::OpBitcast, type_int,
+-      builder.createBinOp(
+-          spv::OpIAdd, type_uint,
+-          builder.createBinOp(
+-              spv::OpIMul, type_uint,
+-              builder.makeUintConstant(tile_height_samples >> uint32_t(key.source_msaa_samples >=
+-                                                                       xenos::MsaaSamples::k2X)),
+-              source_tile_index_y),
+-          source_tile_pixel_y));
++  spv::Id source_pixel_x_int,source_pixel_y_int;
++#if REX_PLATFORM_SWITCH
++  if (key.key & lb2::transfer_same_origin::kModeBit) {
++    const auto coordinates=Lb2BuildTransferSameOriginCoordinates(
++        builder,dest_pixel_x,dest_pixel_y,dest_sample_id);
++    source_pixel_x_int=builder.createUnaryOp(spv::OpBitcast,type_int,coordinates.x);
++    source_pixel_y_int=builder.createUnaryOp(spv::OpBitcast,type_int,coordinates.y);
++  } else
++#endif
++  {
++    source_pixel_x_int = builder.createUnaryOp(
++        spv::OpBitcast, type_int,
++        builder.createBinOp(
++            spv::OpIAdd, type_uint,
++            builder.createBinOp(
++                spv::OpIMul, type_uint,
++                builder.makeUintConstant(tile_width_samples >> source_pixel_width_dwords_log2),
++                source_tile_index_x),
++            source_tile_pixel_x));
++    source_pixel_y_int = builder.createUnaryOp(
++        spv::OpBitcast, type_int,
++        builder.createBinOp(
++            spv::OpIAdd, type_uint,
++            builder.createBinOp(
++                spv::OpIMul, type_uint,
++                builder.makeUintConstant(tile_height_samples >> uint32_t(key.source_msaa_samples >=
++                                                                         xenos::MsaaSamples::k2X)),
++                source_tile_index_y),
++            source_tile_pixel_y));
++  }
+ 
+   // Load the source.
+ 
+@@ -4446,7 +4462,7 @@
+ #if REX_PLATFORM_SWITCH
+   if (lb2::transfer_pitch::Pitch(key.shader_key.key) &&
+       transfer_pipelines_.size() >= lb2::transfer_pitch::kSpecializationCacheLimit) {
+-    key.shader_key.key = lb2::transfer_pitch::BaseKey(key.shader_key.key);
++    key.shader_key.key = lb2::transfer_pitch::RemovePitch(key.shader_key.key);
+     pipeline_it = transfer_pipelines_.find(key);
+     if (pipeline_it != transfer_pipelines_.end()) {
+       return pipeline_it->second[0] != VK_NULL_HANDLE ? pipeline_it->second.data() : nullptr;
+@@ -5339,6 +5355,11 @@
+         }
+ #if REX_PLATFORM_SWITCH
+         uint64_t lb2_transfer_pixels = 0;
++        bool lb2_same_origin = vulkan_device->properties().standardSampleLocations &&
++            lb2::transfer_same_origin::Eligible(REXCVAR_GET(lb2_transfer_same_origin),
++                transfer_shader_key.key,lb2_source_key.base_tiles,dest_rt_key.base_tiles,
++                lb2_source_key.GetPitchTiles(),dest_pitch_tiles,
++                draw_resolution_scale_x(),draw_resolution_scale_y());
+ #endif
+         for (auto it_merged = it_merged_first; it_merged <= it_merged_last; ++it_merged) {
+           Transfer::Rectangle transfer_invocation_rectangles[Transfer::kMaxRectanglesWithCutout];
+@@ -5352,6 +5373,14 @@
+             lb2_transfer_pixels += uint64_t(transfer_rectangle.width_pixels) *
+                                    transfer_rectangle.height_pixels * draw_resolution_scale_x() *
+                                    draw_resolution_scale_y();
++            if (lb2_same_origin && !lb2::transfer_same_origin::Rectangle(
++                    transfer_rectangle.x_pixels,transfer_rectangle.y_pixels,
++                    transfer_rectangle.width_pixels,transfer_rectangle.height_pixels,
++                    dest_pitch_tiles,dest_rt_key.GetWidth(),
++                    GetRenderTargetHeight(dest_rt_key.pitch_tiles_at_32bpp,dest_rt_key.msaa_samples),
++                    lb2_source_key.GetWidth(),
++                    GetRenderTargetHeight(lb2_source_key.pitch_tiles_at_32bpp,lb2_source_key.msaa_samples)))
++              lb2_same_origin=false;
+ #endif
+             float transfer_rectangle_x0 = -1.0f + transfer_rectangle.x_pixels * pixels_to_ndc_x;
+             float transfer_rectangle_y0 = -1.0f + transfer_rectangle.y_pixels * pixels_to_ndc_y;
+@@ -5400,9 +5429,22 @@
+         transfer_shader_key.key = lb2::transfer_pitch::MakeKey(
+             transfer_shader_key.key, source_vulkan_rt.key().GetPitchTiles(),
+             REXCVAR_GET(lb2_transfer_pitch_specialization));
++        transfer_shader_key.key = lb2::transfer_same_origin::MakeKey(
++            transfer_shader_key.key,lb2_same_origin);
+ #endif
+         const VkPipeline* transfer_pipelines = GetTransferPipelines(
+             TransferPipelineKey(transfer_render_pass_key, transfer_shader_key));
++#if REX_PLATFORM_SWITCH
++        if (!transfer_pipelines && lb2_same_origin) {
++          // No draw commands were emitted yet. A failed optional variant must
++          // not suppress the original stencil transfer.
++          transfer_shader_key.key = lb2::transfer_pitch::MakeKey(
++              lb2::transfer_pitch::BaseKey(transfer_shader_key.key),
++              lb2_source_key.GetPitchTiles(),REXCVAR_GET(lb2_transfer_pitch_specialization));
++          transfer_pipelines = GetTransferPipelines(
++              TransferPipelineKey(transfer_render_pass_key,transfer_shader_key));
++        }
++#endif
+         if (!transfer_pipelines) {
+           continue;
+         }

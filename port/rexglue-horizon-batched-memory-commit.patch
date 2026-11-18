@@ -1,0 +1,28 @@
+--- a/src/core/guest_memory_switch.cpp
++++ b/src/core/guest_memory_switch.cpp
+@@ -8,6 +8,7 @@
+ #include <string.h>
+ #include <switch.h>
+ 
++#include <algorithm>
+ #include <map>
+ #include <set>
+ #include <atomic>
+@@ -478,8 +479,15 @@
+     std::lock_guard<std::mutex> lock(s.mutex);
+     if (!s.base) return false;
+ 
+-    const size_t begin = AlignDown(offset, kPageSize);
+-    const size_t end   = AlignUp(offset + length, kPageSize);
++    /*
++     * Back small guest commits with shared 2 MB granules. A code alias for every
++     * 4 KB guest heap allocation exhausts Horizon mapping resources during LB2
++     * startup (0xCE01), even while backing is only about 542 MB. Guest allocation
++     * state is still tracked page by page by xmemory.cpp; only host backing is
++     * rounded here. Matches the batched commit fix in the pinned sa2-nx SDK.
++     */
++    const size_t begin = AlignDown(offset, kBlockSize);
++    const size_t end   = std::min(AlignUp(offset + length, kBlockSize), s.size);
+ 
+     size_t cur = begin;
+     while (cur < end) {

@@ -32,3 +32,19 @@ non_argument_as_local = false
 "0x82AA9AE8" = { size = 0x18 }
 # Observed forwarding setter of a separate object wrapper, slot 0x82185C64.
 "0x82AAA168" = { size = 0x18 }
+# Observed forwarding virtual thunk, slot verified in the selected image.
+"0x82AAA180" = { size = 0x14 }
+# Observed split method: prefix ends before existing zero-return block 0x82556994.
+"0x82556980" = { size = 0x14 }
+# Observed split flag setter; existing tail block 0x8275811C remains registered.
+"0x827580D8" = { size = 0x44 }
+# Start/controller route observed in host-freeze-baseline.log; virtual tail +0x58.
+"0x823A1A60" = { size = 0x10 }
+# Save-selection route observed in legobatman2_006.log; virtual tail +0x40.
+"0x823A1AA0" = { size = 0x10 }
+# Overwrite-confirmation route observed in render-baseline.log; virtual tail +0x54.
+"0x823A1AD0" = { size = 0x10 }
+# Observed end-of-cutscene callback prefix; existing tails at B4E8/B508 stay separate.
+"0x8226B460" = { size = 0x88 }
+# Observed Load Game route; exact four-instruction virtual tail through +0x3C.
+"0x823A1A80" = { size = 0x10 }

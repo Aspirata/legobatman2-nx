@@ -1,0 +1,118 @@
+--- a/src/graphics/vulkan/command_processor.cpp
++++ b/src/graphics/vulkan/command_processor.cpp
+@@ -4443,6 +4443,10 @@
+ bool VulkanCommandProcessor::IssueDraw_MemexportReadbackFullPath(uint32_t total_size) {
+ #if REX_PLATFORM_SWITCH
+   Lb2GpuProfileScope lb2_gpu_profile_scope(1);
++#define LB2_MEMEXPORT_CALL(category, expression) \
++  Lb2GpuProfileCall(category, [&] { return (expression); })
++#else
++#define LB2_MEMEXPORT_CALL(category, expression) (expression)
+ #endif
+ 
+   if (!total_size || memexport_ranges_.empty()) {
+@@ -4457,14 +4461,18 @@
+   VkDeviceMemory readback_memory = VK_NULL_HANDLE;
+   uint32_t readback_memory_type = UINT32_MAX;
+   VkDeviceSize readback_memory_size = 0;
+-  if (!ui::vulkan::util::CreateDedicatedAllocationBuffer(
++  if (!LB2_MEMEXPORT_CALL(12, ui::vulkan::util::CreateDedicatedAllocationBuffer(
+           vulkan_device, total_size, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+           ui::vulkan::util::MemoryPurpose::kReadback, readback_buffer, readback_memory,
+-          &readback_memory_type, &readback_memory_size)) {
++          &readback_memory_type, &readback_memory_size))) {
+     REXGPU_ERROR("Failed to create a Vulkan memexport readback buffer");
+     return true;
+   }
+ 
++  {
++#if REX_PLATFORM_SWITCH
++  Lb2GpuProfileScope record_scope(13);
++#endif
+   shared_memory_->Use(VulkanSharedMemory::Usage::kRead);
+   SubmitBarriers(true);
+ 
+@@ -4481,18 +4489,25 @@
+   PushBufferMemoryBarrier(readback_buffer, 0, total_size, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                           VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_TRANSFER_WRITE_BIT,
+                           VK_ACCESS_HOST_READ_BIT);
+-
+-  if (!AwaitAllQueueOperationsCompletion()) {
++  }
++
++  if (!LB2_MEMEXPORT_CALL(14, AwaitAllQueueOperationsCompletion())) {
+     REXGPU_ERROR("Failed to await completion of Vulkan memexport readback");
++#if REX_PLATFORM_SWITCH
++    Lb2GpuProfileScope release_scope(18);
++#endif
+     dfn.vkDestroyBuffer(device, readback_buffer, nullptr);
+     dfn.vkFreeMemory(device, readback_memory, nullptr);
+     return true;
+   }
+ 
+   void* readback_mapping = nullptr;
+-  if (dfn.vkMapMemory(device, readback_memory, 0, VK_WHOLE_SIZE, 0, &readback_mapping) !=
++  if (LB2_MEMEXPORT_CALL(15, dfn.vkMapMemory(device, readback_memory, 0, VK_WHOLE_SIZE, 0, &readback_mapping)) !=
+       VK_SUCCESS) {
+     REXGPU_ERROR("Failed to map a Vulkan memexport readback buffer");
++#if REX_PLATFORM_SWITCH
++    Lb2GpuProfileScope release_scope(18);
++#endif
+     dfn.vkDestroyBuffer(device, readback_buffer, nullptr);
+     dfn.vkFreeMemory(device, readback_memory, nullptr);
+     return true;
+@@ -4506,20 +4521,29 @@
+     readback_memory_range.size = std::min(
+         rex::round_up(VkDeviceSize(total_size), vulkan_device->properties().nonCoherentAtomSize),
+         readback_memory_size);
+-    dfn.vkInvalidateMappedMemoryRanges(device, 1, &readback_memory_range);
+-  }
+-
++    LB2_MEMEXPORT_CALL(16, dfn.vkInvalidateMappedMemoryRanges(device, 1, &readback_memory_range));
++  }
++
++  {
++#if REX_PLATFORM_SWITCH
++  Lb2GpuProfileScope copy_scope(17);
++#endif
+   const uint8_t* readback_bytes = reinterpret_cast<const uint8_t*>(readback_mapping);
+   for (const draw_util::MemExportRange& memexport_range : memexport_ranges_) {
+     std::memcpy(memory_->TranslatePhysical(memexport_range.base_address_dwords << 2),
+                 readback_bytes, memexport_range.size_bytes);
+     readback_bytes += memexport_range.size_bytes;
+   }
++  }
++#if REX_PLATFORM_SWITCH
++  Lb2GpuProfileScope release_scope(18);
++#endif
+   dfn.vkUnmapMemory(device, readback_memory);
+   dfn.vkDestroyBuffer(device, readback_buffer, nullptr);
+   dfn.vkFreeMemory(device, readback_memory, nullptr);
+   return true;
+ }
++#undef LB2_MEMEXPORT_CALL
+ 
+ bool VulkanCommandProcessor::IssueDraw_MemexportReadbackFastPath(uint32_t total_size) {
+   if (!total_size || memexport_ranges_.empty()) {
+--- a/src/graphics/vulkan/deferred_command_buffer.cpp
++++ b/src/graphics/vulkan/deferred_command_buffer.cpp
+@@ -63,6 +63,9 @@
+         render_pass_begin_info.renderPass = args.render_pass;
+         render_pass_begin_info.framebuffer = args.framebuffer;
+         render_pass_begin_info.renderArea = args.render_area;
++#if REX_PLATFORM_SWITCH
++        lb2_gpu_timestamps.RenderArea(args.render_area.extent.width);
++#endif
+         render_pass_begin_info.clearValueCount = args.clear_value_count;
+         if (render_pass_begin_info.clearValueCount) {
+           offset_bytes = rex::align(offset_bytes, alignof(VkClearValue));
+@@ -250,6 +253,9 @@
+         rendering_info.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
+         rendering_info.flags = args.flags;
+         rendering_info.renderArea = args.render_area;
++#if REX_PLATFORM_SWITCH
++        lb2_gpu_timestamps.RenderArea(args.render_area.extent.width);
++#endif
+         rendering_info.layerCount = args.layer_count;
+         rendering_info.viewMask = args.view_mask;
+         rendering_info.colorAttachmentCount = args.color_attachment_count;

@@ -1,0 +1,104 @@
+--- a/src/graphics/vulkan/command_processor.cpp
++++ b/src/graphics/vulkan/command_processor.cpp
+@@ -81,6 +81,10 @@
+ #include <lb2_gpu_profile.h>
+ #include <lb2_draw_profile.h>
+ #include <lb2_no_effect_points.h>
++#include <lb2_fence_samples.h>
++REXCVAR_DEFINE_BOOL(lb2_fence_operation_samples, false, "GPU/Vulkan",
++                    "Sparse intrusive full-operation completion samples using existing fences")
++    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+ REXCVAR_DEFINE_BOOL(lb2_elide_no_effect_points, false, "GPU/Vulkan",
+                     "Elide exact known no-output point calls outside guest occlusion queries")
+     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+@@ -3769,6 +3773,31 @@
+                                                              ps_param_gen_pos))
+                    : 0;
+ 
++#if REX_PLATFORM_SWITCH
++  const auto lb2_fence_drain = [](void* context) {
++    auto* processor = static_cast<VulkanCommandProcessor*>(context);
++    if (processor->device_lost_) return Lb2FenceDrain::kFailed;
++    if (processor->active_occlusion_query_.valid || !processor->CanEndSubmissionImmediately()) {
++      return Lb2FenceDrain::kUnsafe;
++    }
++    const bool complete = processor->AwaitAllQueueOperationsCompletion();
++    return complete && !processor->device_lost_ ? Lb2FenceDrain::kComplete : Lb2FenceDrain::kFailed;
++  };
++  Lb2FenceKey lb2_fence_key;
++  lb2_fence_key.vs = vertex_shader->ucode_data_hash();
++  lb2_fence_key.ps = pixel_shader ? pixel_shader->ucode_data_hash() : 0;
++  lb2_fence_key.surface = regs.Get<reg::RB_SURFACE_INFO>().value;
++  lb2_fence_key.control = normalized_depth_control.value;
++  lb2_fence_key.mask = pixel_shader
++      ? draw_util::GetNormalizedColorMask(regs, pixel_shader->writes_color_targets()) : 0;
++  lb2_fence_key.extra = regs.Get<reg::RB_DEPTH_INFO>().value;
++  // Before primitive/upload/descriptor/scratch preparation. Scope destruction
++  // is after all later resource locals, so completion cannot reclaim live ones.
++  Lb2FenceSample lb2_fence_sample(lb2_fence_key,
++      REXCVAR_GET(lb2_fence_operation_samples) && !active_occlusion_query_.valid &&
++          vertex_shader->ucode_data_hash() != lb2::points::kVertexShader,
++      lb2_fence_drain, this);
++#endif
+   PrimitiveProcessor::ProcessingResult primitive_processing_result;
+   SpirvShaderTranslator::Modification vertex_shader_modification;
+   SpirvShaderTranslator::Modification pixel_shader_modification;
+@@ -4314,6 +4343,9 @@
+     }
+   }
+ 
++#if REX_PLATFORM_SWITCH
++  lb2_fence_sample.Commit();
++#endif
+   return true;
+ }
+ 
+@@ -4523,18 +4555,44 @@
+   SCOPE_profile_cpu_f("gpu");
+ #endif  // XE_GPU_FINE_GRAINED_DRAW_SCOPES
+ 
++#if REX_PLATFORM_SWITCH
++  const auto lb2_copy_drain = [](void* context) {
++    auto* processor = static_cast<VulkanCommandProcessor*>(context);
++    if (processor->device_lost_) return Lb2FenceDrain::kFailed;
++    if (processor->active_occlusion_query_.valid || !processor->CanEndSubmissionImmediately()) {
++      return Lb2FenceDrain::kUnsafe;
++    }
++    const bool complete = processor->AwaitAllQueueOperationsCompletion();
++    return complete && !processor->device_lost_ ? Lb2FenceDrain::kComplete : Lb2FenceDrain::kFailed;
++  };
++  const auto& lb2_regs = *register_file_;
++  Lb2FenceKey lb2_copy_key;
++  lb2_copy_key.kind = 1;
++  lb2_copy_key.surface = lb2_regs.Get<reg::RB_SURFACE_INFO>().value;
++  lb2_copy_key.control = lb2_regs.Get<reg::RB_COPY_CONTROL>().value;
++  lb2_copy_key.mask = lb2_regs.Get<reg::RB_COPY_DEST_INFO>().value;
++  lb2_copy_key.extra = lb2_regs.Get<reg::RB_DEPTH_INFO>().value;
++  Lb2FenceSample lb2_copy_sample(lb2_copy_key,
++      REXCVAR_GET(lb2_fence_operation_samples) && !active_occlusion_query_.valid,
++      lb2_copy_drain, this);
++#endif
+   if (!BeginSubmission(true)) {
+     return false;
+   }
+ 
+   ReadbackResolveMode readback_mode = GetReadbackResolveMode(REXCVAR_GET(vulkan_readback_resolve));
++  bool result;
+   if (readback_mode == ReadbackResolveMode::kDisabled) {
+     uint32_t written_address, written_length;
+-    return render_target_cache_->Resolve(*memory_, *shared_memory_, *texture_cache_,
++    result = render_target_cache_->Resolve(*memory_, *shared_memory_, *texture_cache_,
+                                          written_address, written_length);
+-  }
+-
+-  return IssueCopy_ReadbackResolvePath();
++  } else {
++    result = IssueCopy_ReadbackResolvePath();
++  }
++#if REX_PLATFORM_SWITCH
++  if (result) lb2_copy_sample.Commit();
++#endif
++  return result;
+ }
+ 
+ bool VulkanCommandProcessor::IssueCopy_ReadbackResolvePath() {

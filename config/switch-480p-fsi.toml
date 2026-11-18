@@ -1,0 +1,11 @@
+# Switch trial: render directly into emulated EDRAM with fragment interlock.
+# Keep the same 848x480 guest mode and the native physical display mode.
+video_mode_width = 848
+video_mode_height = 480
+resolution_scale = 1
+draw_resolution_scale_x = 1
+draw_resolution_scale_y = 1
+
+render_target_path_vulkan = "fsi"
+# The classic FSI render pass supplies fragment ordering between passes.
+vulkan_dynamic_rendering = false

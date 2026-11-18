@@ -1,0 +1,69 @@
+--- a/src/graphics/vulkan/render_target_cache.cpp
++++ b/src/graphics/vulkan/render_target_cache.cpp
+@@ -75,6 +75,7 @@
+ #include <lb2_gpu_timestamps.h>
+ #include <lb2_dump_pitch.h>
+ #include <lb2_dump_pitch_shader.h>
++#include <lb2_transfer_pitch.h>
+ #include <lb2_stencil_copy.h>
+ #include <lb2_direct_color.h>
+ REXCVAR_DEFINE_BOOL(lb2_direct_color_resolve, false, "GPU/Vulkan",
+@@ -82,6 +83,9 @@
+     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+ REXCVAR_DEFINE_BOOL(lb2_dump_pitch_specialization, false, "GPU/Vulkan",
+                     "Specialize EDRAM dump source pitch with exact integer addressing")
++    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
++REXCVAR_DEFINE_BOOL(lb2_transfer_pitch_specialization, false, "GPU/Vulkan",
++                    "Specialize ownership-transfer source pitch with exact integer addressing")
+     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+ REXCVAR_DEFINE_BOOL(lb2_stencil_copy, false, "GPU/Vulkan",
+                     "Guarded depth4x to depth1x stencil compute/copy trial")
+@@ -3157,10 +3161,17 @@
+       builder.createTriOp(spv::OpBitFieldUExtract, type_uint, address_constant,
+                           builder.makeUintConstant(xenos::kEdramPitchTilesBits),
+                           builder.makeUintConstant(xenos::kEdramPitchTilesBits));
++#if REX_PLATFORM_SWITCH
++  const auto source_tile_coordinates = Lb2BuildDumpTileCoordinates(
++      builder, source_tile_index, source_pitch_tiles, lb2::transfer_pitch::Pitch(key.key));
++  spv::Id source_tile_index_y = source_tile_coordinates.y;
++  spv::Id source_tile_index_x = source_tile_coordinates.x;
++#else
+   spv::Id source_tile_index_y =
+       builder.createBinOp(spv::OpUDiv, type_uint, source_tile_index, source_pitch_tiles);
+   spv::Id source_tile_index_x =
+       builder.createBinOp(spv::OpUMod, type_uint, source_tile_index, source_pitch_tiles);
++#endif
+   // Finally calculate the source texture coordinates.
+   spv::Id source_pixel_x_int = builder.createUnaryOp(
+       spv::OpBitcast, type_int,
+@@ -4422,6 +4433,16 @@
+   if (pipeline_it != transfer_pipelines_.end()) {
+     return pipeline_it->second[0] != VK_NULL_HANDLE ? pipeline_it->second.data() : nullptr;
+   }
++#if REX_PLATFORM_SWITCH
++  if (lb2::transfer_pitch::Pitch(key.shader_key.key) &&
++      transfer_pipelines_.size() >= lb2::transfer_pitch::kSpecializationCacheLimit) {
++    key.shader_key.key = lb2::transfer_pitch::BaseKey(key.shader_key.key);
++    pipeline_it = transfer_pipelines_.find(key);
++    if (pipeline_it != transfer_pipelines_.end()) {
++      return pipeline_it->second[0] != VK_NULL_HANDLE ? pipeline_it->second.data() : nullptr;
++    }
++  }
++#endif
+ 
+   const TransferModeInfo& mode = kTransferModes[size_t(key.shader_key.mode)];
+ 
+@@ -5363,6 +5384,13 @@
+         command_buffer.CmdVkBindVertexBuffers(0, 1, &transfer_vertex_buffer,
+                                               &transfer_vertex_buffer_offset);
+ 
++#if REX_PLATFORM_SWITCH
++        // Specialize only the local pipeline request, after the original
++        // invocation sort and merge. Preserve depth/stencil processing order.
++        transfer_shader_key.key = lb2::transfer_pitch::MakeKey(
++            transfer_shader_key.key, source_vulkan_rt.key().GetPitchTiles(),
++            REXCVAR_GET(lb2_transfer_pitch_specialization));
++#endif
+         const VkPipeline* transfer_pipelines = GetTransferPipelines(
+             TransferPipelineKey(transfer_render_pass_key, transfer_shader_key));
+         if (!transfer_pipelines) {

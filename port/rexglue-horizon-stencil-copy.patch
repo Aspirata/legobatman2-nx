@@ -1,0 +1,107 @@
+--- a/src/graphics/vulkan/render_target_cache.cpp
++++ b/src/graphics/vulkan/render_target_cache.cpp
+@@ -72,6 +72,10 @@
+ 
+ #if REX_PLATFORM_SWITCH
+ #include <lb2_gpu_profile.h>
++#include <lb2_stencil_copy.h>
++REXCVAR_DEFINE_BOOL(lb2_stencil_copy, false, "GPU/Vulkan",
++                    "Guarded depth4x to depth1x stencil compute/copy trial")
++    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+ #endif
+ 
+ namespace rex::graphics::vulkan {
+@@ -985,6 +989,9 @@
+   const ui::vulkan::VulkanDevice* const vulkan_device = command_processor_.GetVulkanDevice();
+   const ui::vulkan::VulkanDevice::Functions& dfn = vulkan_device->functions();
+   const VkDevice device = vulkan_device->device();
++#if REX_PLATFORM_SWITCH
++  Lb2ShutdownStencilCopy(vulkan_device);
++#endif
+ 
+   // Destroy all render targets before the descriptor set pool is destroyed -
+   // may happen if shutting down the VulkanRenderTargetCache by destroying it,
+@@ -1921,6 +1928,12 @@
+     image_create_info.format = GetDepthVulkanFormat(key.GetDepthFormat());
+     transfer_format = image_create_info.format;
+     image_create_info.usage |= VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
++#if REX_PLATFORM_SWITCH
++    // Respect NVK's conservative ZCULL eligibility: transfer-written1x images
++    // deliberately lose ZCULL in this trial. No driver rule is bypassed.
++    if (REXCVAR_GET(lb2_stencil_copy) && key.msaa_samples == xenos::MsaaSamples::k1X)
++      image_create_info.usage |= VK_IMAGE_USAGE_TRANSFER_DST_BIT;
++#endif
+   } else {
+     xenos::ColorRenderTargetFormat color_format = key.GetColorFormat();
+     image_create_info.format = GetColorVulkanFormat(color_format);
+@@ -5105,6 +5118,70 @@
+         bool transfer_is_stencil_bit = (transfer_pipeline_layout_info.used_push_constant_dwords &
+                                         kTransferUsedPushConstantDwordStencilMaskBit) != 0;
+ 
++#if REX_PLATFORM_SWITCH
++        const auto lb2_source_key = source_vulkan_rt.key();
++        auto lb2_target = [](const RenderTargetKey& key) {
++          return lb2::stencil::Target{key.base_tiles,key.pitch_tiles_at_32bpp,key.resource_format,
++                                      uint32_t(key.msaa_samples),bool(key.is_depth)};
++        };
++        if (transfer_is_stencil_bit && it_merged_first == it_merged_last &&
++            lb2::stencil::Eligible(REXCVAR_GET(lb2_stencil_copy),lb2_target(lb2_source_key),
++                                   lb2_target(dest_rt_key),draw_resolution_scale_x(),draw_resolution_scale_y(),
++                                   vulkan_device->properties().standardSampleLocations)) {
++          Transfer::Rectangle lb2_rectangles[Transfer::kMaxRectanglesWithCutout];
++          const uint32_t lb2_count = it_merged_first->transfer.GetRectangles(
++              dest_rt_key.base_tiles,dest_pitch_tiles,dest_rt_key.msaa_samples,dest_is_64bpp,
++              lb2_rectangles,resolve_clear_rectangle);
++          std::array<lb2::stencil::Plan,Transfer::kMaxRectanglesWithCutout> lb2_plans{};
++          bool lb2_valid = lb2_count != 0;
++          uint64_t lb2_max_bytes = 0,lb2_total_bytes = 0;
++          for (uint32_t lb2_i=0;lb2_i<lb2_count;++lb2_i) {
++            const auto& rectangle=lb2_rectangles[lb2_i];
++            if (!lb2::stencil::MakePlan(rectangle.x_pixels,rectangle.y_pixels,
++                    rectangle.width_pixels,rectangle.height_pixels,dest_rt_key.GetWidth(),
++                    GetRenderTargetHeight(dest_rt_key.pitch_tiles_at_32bpp,dest_rt_key.msaa_samples),
++                    lb2_source_key.GetWidth(),
++                    GetRenderTargetHeight(lb2_source_key.pitch_tiles_at_32bpp,lb2_source_key.msaa_samples),
++                    4*1024*1024,lb2_plans[lb2_i])) {lb2_valid=false;break;}
++            lb2_max_bytes=std::max(lb2_max_bytes,lb2_plans[lb2_i].bytes);
++            lb2_total_bytes+=lb2_plans[lb2_i].bytes;
++          }
++          Lb2StencilCopyRecording lb2_recording;
++          if (lb2_valid && Lb2PrepareStencilCopy(command_processor_,descriptor_set_layout_sampled_image_x2_,
++                                                lb2_max_bytes,lb2_recording)) {
++            command_processor_.EndRenderPass();
++            const auto lb2_range=ui::vulkan::util::InitializeSubresourceRange(
++                VK_IMAGE_ASPECT_DEPTH_BIT|VK_IMAGE_ASPECT_STENCIL_BIT);
++            command_processor_.PushImageMemoryBarrier(source_vulkan_rt.image(),lb2_range,
++                VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
++                VK_ACCESS_MEMORY_WRITE_BIT|VK_ACCESS_MEMORY_READ_BIT,VK_ACCESS_SHADER_READ_BIT,
++                source_vulkan_rt.current_layout(),VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
++                VK_QUEUE_FAMILY_IGNORED,VK_QUEUE_FAMILY_IGNORED,false);
++            source_vulkan_rt.SetUsage(VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,VK_ACCESS_SHADER_READ_BIT,
++                                      VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
++            command_processor_.PushImageMemoryBarrier(dest_vulkan_rt.image(),lb2_range,
++                dest_vulkan_rt.current_stage_mask(),VK_PIPELINE_STAGE_TRANSFER_BIT,
++                dest_vulkan_rt.current_access_mask(),VK_ACCESS_TRANSFER_WRITE_BIT,
++                dest_vulkan_rt.current_layout(),VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
++            for (uint32_t lb2_i=0;lb2_i<lb2_count;++lb2_i)
++              Lb2RecordStencilCopy(command_processor_,lb2_recording,source_vulkan_rt.GetDescriptorSetTransferSource(),
++                                    dest_vulkan_rt.image(),lb2_plans[lb2_i]);
++            VkPipelineStageFlags lb2_dest_stage;
++            VkAccessFlags lb2_dest_access;
++            VkImageLayout lb2_dest_layout;
++            dest_vulkan_rt.GetDrawUsage(&lb2_dest_stage,&lb2_dest_access,&lb2_dest_layout);
++            command_processor_.PushImageMemoryBarrier(dest_vulkan_rt.image(),lb2_range,
++                VK_PIPELINE_STAGE_TRANSFER_BIT,lb2_dest_stage,VK_ACCESS_TRANSFER_WRITE_BIT,lb2_dest_access,
++                VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,lb2_dest_layout);
++            dest_vulkan_rt.SetUsage(lb2_dest_stage,lb2_dest_access,lb2_dest_layout);
++            command_processor_.SubmitBarriersAndEnterRenderTargetCacheRenderPass(
++                transfer_render_pass,transfer_framebuffer,transfer_dest_view,true);
++            Lb2GpuProfileFastStencilCopy(lb2_count,lb2_total_bytes);
++            continue;
++          }
++        }
++#endif
++
+         uint32_t transfer_vertex_count = 6 * transfer_rectangle_count;
+         VkBuffer transfer_vertex_buffer;
+         VkDeviceSize transfer_vertex_buffer_offset;

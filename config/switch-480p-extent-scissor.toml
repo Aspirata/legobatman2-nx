@@ -1,0 +1,20 @@
+# Run039 renderer, with one experimental extent-estimation setting.
+# Compare the same opening flight; this is not a validated FPS fix.
+video_mode_width = 848
+video_mode_height = 480
+resolution_scale = 1
+draw_resolution_scale_x = 1
+draw_resolution_scale_y = 1
+
+lb2_direct_color_resolve = true
+lb2_dump_pitch_specialization = true
+lb2_transfer_pitch_specialization = true
+lb2_elide_no_effect_points = true
+lb2_gpu_timestamps = false
+
+# Existing CPU vertex interpretation may tighten scissored, unclipped draws.
+# The normal execute_unclipped_draw_vs_on_cpu switch is forced on by the app.
+execute_unclipped_draw_vs_on_cpu_with_scissor = true
+
+[log.levels]
+gpu = "error"

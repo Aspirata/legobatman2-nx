@@ -1,0 +1,34 @@
+--- a/src/graphics/vulkan/pipeline_cache.cpp
++++ b/src/graphics/vulkan/pipeline_cache.cpp
+@@ -26,6 +26,7 @@
+ #include <rex/assert.h>
+ #if REX_PLATFORM_SWITCH
+ #include <lb2_memexport_format.h>
++#include <lb2_gpu_profile.h>
+ #endif
+ #include <rex/cvar.h>
+ #include <rex/dbg.h>
+@@ -767,6 +768,9 @@
+ }
+ 
+ void VulkanPipelineCache::EndSubmission() {
++#if REX_PLATFORM_SWITCH
++  Lb2GpuProfileScope lb2_pipeline_prepare_scope(10);
++#endif
+   if (shader_storage_file_flush_needed_ || pipeline_storage_file_flush_needed_) {
+     {
+       std::lock_guard<std::mutex> lock(storage_write_request_lock_);
+@@ -3527,9 +3531,13 @@
+   VkPipeline pipeline;
+ #if REX_PLATFORM_SWITCH
+   RexSwitchPerfCount(16);
++  const uint64_t lb2_pipeline_create_start = Lb2GpuProfileNow();
+ #endif
+   VkResult create_result = dfn.vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1,
+                                                          &pipeline_create_info, nullptr, &pipeline);
++#if REX_PLATFORM_SWITCH
++  Lb2GpuProfileEnd(11, lb2_pipeline_create_start);
++#endif
+   if (create_result != VK_SUCCESS) {
+     uint64_t ps_hash = creation_arguments.pixel_shader
+                            ? creation_arguments.pixel_shader->shader().ucode_data_hash()

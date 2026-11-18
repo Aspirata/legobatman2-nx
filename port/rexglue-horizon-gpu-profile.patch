@@ -1,0 +1,105 @@
+--- a/src/graphics/vulkan/command_processor.cpp
++++ b/src/graphics/vulkan/command_processor.cpp
+@@ -76,6 +76,10 @@
+                     "Use VK_KHR_dynamic_rendering for Vulkan GPU emulation when supported by the "
+                     "device (falls back to render passes otherwise)")
+     .lifecycle(rex::cvar::Lifecycle::kHotReload);
++
++#if REX_PLATFORM_SWITCH
++#include <lb2_gpu_profile.h>
++#endif
+ 
+ namespace rex::graphics::vulkan {
+ 
+@@ -3630,6 +3634,10 @@
+ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t index_count,
+                                        IndexBufferInfo* index_buffer_info,
+                                        bool major_mode_explicit) {
++#if REX_PLATFORM_SWITCH
++  Lb2GpuProfileScope lb2_gpu_profile_scope(0);
++#endif
++
+ #if XE_GPU_FINE_GRAINED_DRAW_SCOPES
+   SCOPE_profile_cpu_f("gpu");
+ #endif  // XE_GPU_FINE_GRAINED_DRAW_SCOPES
+@@ -4250,6 +4258,10 @@
+ }
+ 
+ bool VulkanCommandProcessor::IssueDraw_MemexportReadbackFullPath(uint32_t total_size) {
++#if REX_PLATFORM_SWITCH
++  Lb2GpuProfileScope lb2_gpu_profile_scope(1);
++#endif
++
+   if (!total_size || memexport_ranges_.empty()) {
+     return true;
+   }
+@@ -5020,6 +5032,10 @@
+ }
+ 
+ void VulkanCommandProcessor::CheckSubmissionFenceAndDeviceLoss(uint64_t await_submission) {
++#if REX_PLATFORM_SWITCH
++  Lb2GpuProfileScope lb2_gpu_profile_scope(3);
++#endif
++
+   // Only report once, no need to retry a wait that won't succeed anyway.
+   if (device_lost_) {
+     return;
+@@ -5306,6 +5322,10 @@
+ }
+ 
+ bool VulkanCommandProcessor::EndSubmission(bool is_swap) {
++#if REX_PLATFORM_SWITCH
++  Lb2GpuProfileScope lb2_gpu_profile_scope(2);
++#endif
++
+   const ui::vulkan::VulkanDevice* const vulkan_device = GetVulkanDevice();
+   const ui::vulkan::VulkanDevice::Functions& dfn = vulkan_device->functions();
+   const VkDevice device = vulkan_device->device();
+--- a/src/graphics/vulkan/render_target_cache.cpp
++++ b/src/graphics/vulkan/render_target_cache.cpp
+@@ -68,6 +68,10 @@
+ extern "C" void RexSwitchPerfCount(unsigned id);
+ extern "C" void RexSwitchPerfAdd(unsigned id, uint64_t value);
+ extern "C" bool RexSwitchPerfSkip(unsigned bit);
++#endif
++
++#if REX_PLATFORM_SWITCH
++#include <lb2_gpu_profile.h>
+ #endif
+ 
+ namespace rex::graphics::vulkan {
+@@ -1136,6 +1140,10 @@
+                                       VulkanSharedMemory& shared_memory,
+                                       VulkanTextureCache& texture_cache,
+                                       uint32_t& written_address_out, uint32_t& written_length_out) {
++#if REX_PLATFORM_SWITCH
++  Lb2GpuProfileScope lb2_gpu_profile_scope(4);
++#endif
++
+   written_address_out = 0;
+   written_length_out = 0;
+ 
+--- a/src/graphics/vulkan/texture_cache.cpp
++++ b/src/graphics/vulkan/texture_cache.cpp
+@@ -44,6 +44,10 @@
+ extern "C" void RexSwitchPerfCount(unsigned id);
+ extern "C" void RexSwitchPerfAdd(unsigned id, uint64_t value);
+ extern "C" bool RexSwitchPerfSkip(unsigned bit);
++#endif
++
++#if REX_PLATFORM_SWITCH
++#include <lb2_gpu_profile.h>
+ #endif
+ 
+ namespace rex::graphics::vulkan {
+@@ -562,6 +566,10 @@
+ }
+ 
+ void VulkanTextureCache::RequestTextures(uint32_t used_texture_mask) {
++#if REX_PLATFORM_SWITCH
++  Lb2GpuProfileScope lb2_gpu_profile_scope(5);
++#endif
++
+ #if XE_GPU_FINE_GRAINED_DRAW_SCOPES
+   SCOPE_profile_cpu_f("gpu");
+ #endif  // XE_GPU_FINE_GRAINED_DRAW_SCOPES

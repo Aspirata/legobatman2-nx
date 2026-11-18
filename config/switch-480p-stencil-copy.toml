@@ -1,0 +1,7 @@
+# Opt-in trial; default builds keep the ordinary path unless this is enabled.
+video_mode_width = 848
+video_mode_height = 480
+resolution_scale = 1
+draw_resolution_scale_x = 1
+draw_resolution_scale_y = 1
+lb2_stencil_copy = true

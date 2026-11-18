@@ -1,0 +1,15 @@
+--- a/src/compiler/spirv/vtn_private.h
++++ b/src/compiler/spirv/vtn_private.h
+@@ -622,7 +622,12 @@
+    linear_ctx *lin_ctx;
+ 
+    /* Used by vtn_fail to jump back to the beginning of SPIR-V compilation */
++#if defined(__MINGW32__) && !defined(_UCRT) && defined(__clang__)
++   /* Match Clang's builtin jump-buffer ABI used by vtn_setjmp above. */
++   void *fail_jump[5];
++#else
+    jmp_buf fail_jump;
++#endif
+ 
+    const uint32_t *spirv;
+    size_t spirv_word_count;

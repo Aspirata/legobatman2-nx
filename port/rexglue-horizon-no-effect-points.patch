@@ -1,0 +1,47 @@
+--- a/src/graphics/vulkan/command_processor.cpp
++++ b/src/graphics/vulkan/command_processor.cpp
+@@ -80,6 +80,10 @@
+ #if REX_PLATFORM_SWITCH
+ #include <lb2_gpu_profile.h>
+ #include <lb2_draw_profile.h>
++#include <lb2_no_effect_points.h>
++REXCVAR_DEFINE_BOOL(lb2_elide_no_effect_points, false, "GPU/Vulkan",
++                    "Elide exact known no-output point calls outside guest occlusion queries")
++    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+ #endif
+ 
+ namespace rex::graphics::vulkan {
+@@ -3719,6 +3723,33 @@
+     }
+   }
+   bool memexport_used_pixel = pixel_shader && (pixel_shader->memexport_eM_written() != 0);
++#if REX_PLATFORM_SWITCH
++  if (vertex_shader->ucode_data_hash() == lb2::points::kVertexShader) {
++    // Check the bound PS identity too, even if the normal SDK analysis above
++    // discarded its effective stage. Unknown programs always retain the path.
++    const auto* lb2_bound_ps = static_cast<VulkanShader*>(active_pixel_shader());
++    const auto lb2_initiator = regs.Get<reg::VGT_DRAW_INITIATOR>();
++    lb2::points::State lb2_point_state;
++    lb2_point_state.vs = vertex_shader->ucode_data_hash();
++    lb2_point_state.has_ps = lb2_bound_ps != nullptr;
++    lb2_point_state.ps = lb2_bound_ps ? lb2_bound_ps->ucode_data_hash() : 0;
++    lb2_point_state.depth_control = draw_util::GetNormalizedDepthControl(regs).value;
++    lb2_point_state.color_mask = pixel_shader
++        ? draw_util::GetNormalizedColorMask(regs, pixel_shader->writes_color_targets()) : 0;
++    lb2_point_state.vertex_memexport = memexport_used_vertex;
++    lb2_point_state.pixel_memexport = memexport_used_pixel;
++    lb2_point_state.query_active = active_occlusion_query_.valid;
++    lb2_point_state.point_list = prim_type == xenos::PrimitiveType::kPointList;
++    lb2_point_state.auto_index = lb2_initiator.source_select == xenos::SourceSelect::kAutoIndex;
++    lb2_point_state.normal_vertex_path = !major_mode_explicit &&
++        lb2_initiator.major_mode == xenos::MajorMode::kImplicit;
++    lb2_point_state.normal_export = regs.Get<reg::SQ_PROGRAM_CNTL>().vs_export_mode ==
++        xenos::VertexShaderExportMode::kPosition1Vector;
++    if (Lb2TryNoEffectPoint(&lb2_point_state, REXCVAR_GET(lb2_elide_no_effect_points))) {
++      return true;
++    }
++  }
++#endif
+   if (memexport_used_pixel) {
+     if (!device_properties.fragmentStoresAndAtomics) {
+       REXGPU_ERROR(

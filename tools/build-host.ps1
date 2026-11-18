@@ -14,6 +14,7 @@ try {
         "-DCMAKE_CXX_COMPILER=$toolRoot/clang-cl/clang-cl.exe" `
         -DCMAKE_CXX_COMPILER_TARGET=x86_64-pc-windows-msvc `
         "-DCMAKE_LINKER=$toolRoot/msvc/Contents/VC/Tools/MSVC/14.44.35207/bin/Hostx64/x64/link.exe" `
+        "-DLB2_PC_OUTPUT_DIRECTORY=$repoRoot/build/pc-play" `
         "-DCMAKE_PREFIX_PATH=$toolRoot/rexglue-0.10.0/win-amd64"
     if ($LASTEXITCODE -ne 0) { throw 'Host configuration failed' }
     & $cmake --build $build -j $Jobs

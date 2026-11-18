@@ -1,0 +1,26 @@
+--- a/src/graphics/vulkan/render_target_cache.cpp
++++ b/src/graphics/vulkan/render_target_cache.cpp
+@@ -92,6 +92,9 @@
+     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+ REXCVAR_DEFINE_BOOL(lb2_stencil_no_zcull_control, false, "GPU/Vulkan",
+                     "Control only: retain stencil draws with transfer-destination image usage")
++    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
++REXCVAR_DEFINE_BOOL(lb2_msaa_no_zcull_control, false, "GPU/Vulkan",
++                    "Control ZCULL cost on multisampled depth targets only")
+     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+ #endif
+ 
+@@ -2042,6 +2045,13 @@
+     // deliberately lose ZCULL in this trial. No driver rule is bypassed.
+     if ((REXCVAR_GET(lb2_stencil_copy) || REXCVAR_GET(lb2_stencil_no_zcull_control)) &&
+         key.msaa_samples == xenos::MsaaSamples::k1X)
++      image_create_info.usage |= VK_IMAGE_USAGE_TRANSFER_DST_BIT;
++    // This independent control covers the hot 2x/4x paths missed by the
++    // earlier 1x-only experiment. NVK's normal image-usage rule removes ZCULL;
++    // no transfer command or emulated sample/address behavior is changed.
++    if (REXCVAR_GET(lb2_msaa_no_zcull_control) &&
++        (key.msaa_samples == xenos::MsaaSamples::k2X ||
++         key.msaa_samples == xenos::MsaaSamples::k4X))
+       image_create_info.usage |= VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+ #endif
+   } else {

@@ -1,0 +1,145 @@
+--- a/src/graphics/vulkan/command_processor.cpp
++++ b/src/graphics/vulkan/command_processor.cpp
+@@ -48,6 +48,7 @@
+ 
+ #if REX_PLATFORM_SWITCH
+ #include <lb2_gpu_timestamps.h>
++#include <lb2_stencil_ones.h>
+ // Optional application extension (native video). Without it the Xenos path is kept.
+ extern "C" bool RexNativeVideoBeginSwap() __attribute__((weak));
+ extern "C" bool RexNativeVideoPresent(const rex::ui::vulkan::VulkanDevice*,
+@@ -3697,6 +3698,9 @@
+     // Special copy handling.
+     return IssueCopy();
+   }
++#if REX_PLATFORM_SWITCH
++  lb2::stencil_ones::Scope lb2_stencil_ones_scope(!active_occlusion_query_.valid);
++#endif
+ 
+   bool surface_pitch_is_zero = regs.Get<reg::RB_SURFACE_INFO>().surface_pitch == 0;
+ 
+@@ -4580,6 +4584,9 @@
+ }
+ 
+ bool VulkanCommandProcessor::IssueCopy() {
++#if REX_PLATFORM_SWITCH
++  lb2::stencil_ones::Scope lb2_stencil_ones_copy_scope(false);
++#endif
+ #if XE_GPU_FINE_GRAINED_DRAW_SCOPES
+   SCOPE_profile_cpu_f("gpu");
+ #endif  // XE_GPU_FINE_GRAINED_DRAW_SCOPES
+--- a/src/graphics/vulkan/render_target_cache.cpp
++++ b/src/graphics/vulkan/render_target_cache.cpp
+@@ -76,6 +76,7 @@
+ #include <lb2_dump_pitch.h>
+ #include <lb2_dump_pitch_shader.h>
+ #include <lb2_transfer_pitch.h>
++#include <lb2_stencil_ones_shader.h>
+ #include <lb2_stencil_copy.h>
+ #include <lb2_direct_color.h>
+ REXCVAR_DEFINE_BOOL(lb2_direct_color_resolve, false, "GPU/Vulkan",
+@@ -86,6 +87,9 @@
+     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+ REXCVAR_DEFINE_BOOL(lb2_transfer_pitch_specialization, false, "GPU/Vulkan",
+                     "Specialize ownership-transfer source pitch with exact integer addressing")
++    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
++REXCVAR_DEFINE_BOOL(lb2_stencil_ones_split, false, "GPU/Vulkan",
++                    "Split full-byte255 from residual color2x-to-stencil4x bit writes")
+     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+ REXCVAR_DEFINE_BOOL(lb2_stencil_copy, false, "GPU/Vulkan",
+                     "Guarded depth4x to depth1x stencil compute/copy trial")
+@@ -4380,11 +4384,16 @@
+               builder.createLoad(builder.createAccessChain(spv::StorageClassPushConstant,
+                                                            push_constants, id_vector_temp),
+                                  spv::NoPrecision);
+-          SpirvBuilder::IfBuilder stencil_kill_if(
+-              builder.createBinOp(
++#if REX_PLATFORM_SWITCH
++          spv::Id stencil_kill_condition = Lb2BuildStencilKill(
++              builder, packed, stencil_mask_constant, lb2::stencil_ones::Decode(key.key));
++#else
++          spv::Id stencil_kill_condition = builder.createBinOp(
+                   spv::OpIEqual, type_bool,
+                   builder.createBinOp(spv::OpBitwiseAnd, type_uint, packed, stencil_mask_constant),
+-                  builder.makeUintConstant(0)),
++                  builder.makeUintConstant(0));
++#endif
++          SpirvBuilder::IfBuilder stencil_kill_if(stencil_kill_condition,
+               spv::SelectionControlMaskNone, builder);
+           builder.createNoResultOp(spv::OpKill);
+           // OpKill terminates the block.
+@@ -4436,7 +4445,7 @@
+ #if REX_PLATFORM_SWITCH
+   if (lb2::transfer_pitch::Pitch(key.shader_key.key) &&
+       transfer_pipelines_.size() >= lb2::transfer_pitch::kSpecializationCacheLimit) {
+-    key.shader_key.key = lb2::transfer_pitch::BaseKey(key.shader_key.key);
++    key.shader_key.key = lb2::transfer_pitch::RemovePitch(key.shader_key.key);
+     pipeline_it = transfer_pipelines_.find(key);
+     if (pipeline_it != transfer_pipelines_.end()) {
+       return pipeline_it->second[0] != VK_NULL_HANDLE ? pipeline_it->second.data() : nullptr;
+@@ -5391,8 +5400,34 @@
+             transfer_shader_key.key, source_vulkan_rt.key().GetPitchTiles(),
+             REXCVAR_GET(lb2_transfer_pitch_specialization));
+ #endif
+-        const VkPipeline* transfer_pipelines = GetTransferPipelines(
+-            TransferPipelineKey(transfer_render_pass_key, transfer_shader_key));
++        const VkPipeline* transfer_pipelines = nullptr;
++#if REX_PLATFORM_SWITCH
++        const VkPipeline* lb2_bulk_stencil_pipelines = nullptr;
++        TransferShaderKey lb2_bulk_stencil_shader_key;
++        if (lb2::stencil_ones::CanSplit(transfer_shader_key.key,
++                REXCVAR_GET(lb2_stencil_ones_split), lb2::stencil_ones::ScopeAllowed())) {
++          TransferShaderKey lb2_residual_shader_key = transfer_shader_key;
++          lb2_residual_shader_key.key = lb2::stencil_ones::Variant(
++              transfer_shader_key.key, lb2::stencil_ones::ShaderMode::kResidual);
++          lb2_bulk_stencil_shader_key = transfer_shader_key;
++          lb2_bulk_stencil_shader_key.key = lb2::stencil_ones::Variant(
++              transfer_shader_key.key, lb2::stencil_ones::ShaderMode::kBulk);
++          const VkPipeline* lb2_bulk = GetTransferPipelines(
++              TransferPipelineKey(transfer_render_pass_key, lb2_bulk_stencil_shader_key));
++          const VkPipeline* lb2_residual = GetTransferPipelines(
++              TransferPipelineKey(transfer_render_pass_key, lb2_residual_shader_key));
++          // Both variants must exist before recording the first split draw.
++          if (lb2_bulk && lb2_residual) {
++            lb2_bulk_stencil_pipelines = lb2_bulk;
++            transfer_pipelines = lb2_residual;
++            transfer_shader_key = lb2_residual_shader_key;
++          }
++        }
++#endif
++        if (!transfer_pipelines) {
++          transfer_pipelines = GetTransferPipelines(
++              TransferPipelineKey(transfer_render_pass_key, transfer_shader_key));
++        }
+         if (!transfer_pipelines) {
+           continue;
+         }
+@@ -5527,6 +5562,28 @@
+           if (j) {
+             command_processor_.BindExternalGraphicsPipeline(transfer_pipelines[j]);
+           }
++#if REX_PLATFORM_SWITCH
++          if (lb2_bulk_stencil_pipelines) {
++            command_processor_.BindExternalGraphicsPipeline(lb2_bulk_stencil_pipelines[j]);
++            const uint32_t lb2_full_stencil_mask = UINT8_MAX;
++            command_buffer.CmdVkPushConstants(
++                transfer_pipeline_layout, VK_SHADER_STAGE_FRAGMENT_BIT,
++                sizeof(uint32_t) * rex::bit_count(
++                    transfer_pipeline_layout_info.used_push_constant_dwords &
++                    (kTransferUsedPushConstantDwordStencilMaskBit - 1)),
++                sizeof(uint32_t), &lb2_full_stencil_mask);
++            command_buffer.CmdVkSetStencilWriteMask(VK_STENCIL_FACE_FRONT_AND_BACK,
++                                                    lb2_full_stencil_mask);
++            RexSwitchPerfCount(13);
++            if (!RexSwitchPerfSkip(2)) {
++              Lb2GpuProfileTransfer(lb2_bulk_stencil_shader_key.key, source_vulkan_rt.key().key,
++                  dest_rt_key.key, uint32_t(transfer_mode_info.output), transfer_rectangle_count,
++                  lb2_transfer_pixels);
++              command_buffer.CmdVkDraw(transfer_vertex_count, 1, 0, 0);
++            }
++            command_processor_.BindExternalGraphicsPipeline(transfer_pipelines[j]);
++          }
++#endif
+           for (uint32_t k = 0; k < uint32_t(transfer_is_stencil_bit ? 8 : 1); ++k) {
+             if (transfer_is_stencil_bit) {
+               uint32_t transfer_stencil_bit = uint32_t(1) << k;

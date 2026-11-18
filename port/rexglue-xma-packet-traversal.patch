@@ -1,0 +1,15 @@
+diff --git a/src/audio/xma_context.cpp b/src/audio/xma_context.cpp
+--- a/src/audio/xma_context.cpp
++++ b/src/audio/xma_context.cpp
+@@ -316,7 +316,10 @@ uint32_t XmaContext::GetNextPacketReadOffset(uint8_t* buffer, uint32_t next_packet_i
+     if (packet_frame_offset <= kMaxFrameSizeinBits) {
+       return (next_packet_index * kBitsPerPacket) + packet_frame_offset;
+     }
+-    next_packet_index++;
++    // Continuation-only packets still belong to an interleaved stream.
++    // Follow that stream's chain instead of decoding a neighboring stream
++    // with this context's channel count.
++    next_packet_index += uint32_t(xma::GetPacketSkipCount(next_packet)) + 1;
+   }
+ 
+   return kBitsPerPacketHeader;

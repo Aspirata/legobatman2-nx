@@ -1,0 +1,65 @@
+--- a/src/graphics/vulkan/command_processor.cpp
++++ b/src/graphics/vulkan/command_processor.cpp
+@@ -79,6 +79,7 @@
+ 
+ #if REX_PLATFORM_SWITCH
+ #include <lb2_gpu_profile.h>
++#include <lb2_draw_profile.h>
+ #endif
+ 
+ namespace rex::graphics::vulkan {
+@@ -4168,6 +4169,24 @@
+ 
+   // Draw.
+ #if REX_PLATFORM_SWITCH
++  const auto lb2_record_guest_draw = [&](bool indexed) {
++    Lb2GuestDrawKey key;
++    key.vs = vertex_shader->ucode_data_hash();
++    key.ps = pixel_shader ? pixel_shader->ucode_data_hash() : 0;
++    key.surface = regs.Get<reg::RB_SURFACE_INFO>().value;
++    key.depth = regs.Get<reg::RB_DEPTH_INFO>().value;
++    key.color0 = regs.Get<reg::RB_COLOR_INFO>(reg::RB_COLOR_INFO::rt_register_indices[0]).value;
++    key.depth_control = normalized_depth_control.value;
++    key.color_mask = normalized_color_mask;
++    key.flags = uint32_t(memexport_writes_possible) | (uint32_t(is_rasterization_done) << 1) |
++                (uint32_t(indexed) << 2);
++    key.primitive = uint32_t(primitive_processing_result.host_primitive_type);
++    key.x = dynamic_scissor_.offset.x;
++    key.y = dynamic_scissor_.offset.y;
++    key.width = dynamic_scissor_.extent.width;
++    key.height = dynamic_scissor_.extent.height;
++    Lb2GpuProfileDraw(&key, primitive_processing_result.host_draw_vertex_count);
++  };
+   RexSwitchPerfCount(5);
+   RexSwitchPerfAdd(6, uint64_t(dynamic_scissor_.extent.width) * dynamic_scissor_.extent.height);
+   {
+@@ -4189,7 +4208,12 @@
+ #if REX_PLATFORM_SWITCH
+     if (!RexSwitchPerfSkip(1))
+ #endif
+-    deferred_command_buffer_.CmdVkDraw(primitive_processing_result.host_draw_vertex_count, 1, 0, 0);
++    {
++#if REX_PLATFORM_SWITCH
++      lb2_record_guest_draw(false);
++#endif
++      deferred_command_buffer_.CmdVkDraw(primitive_processing_result.host_draw_vertex_count, 1, 0, 0);
++    }
+   } else {
+     std::pair<VkBuffer, VkDeviceSize> index_buffer;
+     switch (primitive_processing_result.index_buffer_type) {
+@@ -4223,8 +4247,13 @@
+ #if REX_PLATFORM_SWITCH
+     if (!RexSwitchPerfSkip(1))
+ #endif
+-    deferred_command_buffer_.CmdVkDrawIndexed(primitive_processing_result.host_draw_vertex_count, 1,
+-                                              0, 0, 0);
++    {
++#if REX_PLATFORM_SWITCH
++      lb2_record_guest_draw(true);
++#endif
++      deferred_command_buffer_.CmdVkDrawIndexed(primitive_processing_result.host_draw_vertex_count, 1,
++                                                0, 0, 0);
++    }
+   }
+ 
+   // Invalidate textures in memexported memory and watch for changes.

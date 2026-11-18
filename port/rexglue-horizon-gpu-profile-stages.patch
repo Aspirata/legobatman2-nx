@@ -1,0 +1,40 @@
+--- a/src/graphics/vulkan/command_processor.cpp
++++ b/src/graphics/vulkan/command_processor.cpp
+@@ -5481,8 +5481,20 @@
+       REXGPU_ERROR("Failed to begin a Vulkan command buffer");
+       return false;
+     }
+-    deferred_command_buffer_.Execute(command_buffer.buffer);
+-    if (dfn.vkEndCommandBuffer(command_buffer.buffer) != VK_SUCCESS) {
++    {
++#if REX_PLATFORM_SWITCH
++      Lb2GpuProfileScope lb2_encode_scope(6);
++#endif
++      deferred_command_buffer_.Execute(command_buffer.buffer);
++    }
++    VkResult lb2_end_result;
++    {
++#if REX_PLATFORM_SWITCH
++      Lb2GpuProfileScope lb2_end_scope(7);
++#endif
++      lb2_end_result = dfn.vkEndCommandBuffer(command_buffer.buffer);
++    }
++    if (lb2_end_result != VK_SUCCESS) {
+       REXGPU_ERROR("Failed to end a Vulkan command buffer");
+       return false;
+     }
+@@ -5511,9 +5523,14 @@
+     }
+     VkResult submit_result;
+     {
++#if REX_PLATFORM_SWITCH
++      const uint64_t lb2_acquire_start = Lb2GpuProfileNow();
++#endif
+       ui::vulkan::VulkanDevice::Queue::Acquisition queue_acquisition =
+           vulkan_device->AcquireQueue(vulkan_device->queue_family_graphics_compute(), 0);
+ #if REX_PLATFORM_SWITCH
++      Lb2GpuProfileEnd(8, lb2_acquire_start);
++      Lb2GpuProfileScope lb2_queue_submit_scope(9);
+       RexSwitchPerfCount(7);
+ #endif
+       submit_result = dfn.vkQueueSubmit(queue_acquisition.queue(), 1, &submit_info, fence);

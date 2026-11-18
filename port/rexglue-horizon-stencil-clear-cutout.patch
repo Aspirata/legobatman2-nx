@@ -1,0 +1,141 @@
+--- a/src/graphics/vulkan/command_processor.cpp
++++ b/src/graphics/vulkan/command_processor.cpp
+@@ -87,6 +87,9 @@
+     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+ REXCVAR_DEFINE_BOOL(lb2_depth_clear_depth_only_alpha, false, "GPU/Vulkan",
+                     "Extend guarded clear imports to exact DepthOnly alpha state without a fragment stage")
++    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
++REXCVAR_DEFINE_BOOL(lb2_stencil_clear_cutout, false, "GPU/Vulkan",
++                    "Crop exact overwritten400x240 stencil imports, preserving depth and border")
+     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+ REXCVAR_DEFINE_BOOL(lb2_clear_trace, false, "GPU/Vulkan",
+                     "Bounded causal clear trace for GPU frames 180 and 280")
+@@ -3994,13 +3997,15 @@
+   const VulkanPipelineCache::PipelineLayoutProvider* pipeline_layout_provider;
+ #if REX_PLATFORM_SWITCH
+   lb2::depth_clear::State lb2_clear_state;
+-  if (REXCVAR_GET(lb2_depth_clear_cutout) && vertex_shader->ucode_data_hash()==UINT64_C(0x1E6883FCCDE1F688)) {
++  if ((REXCVAR_GET(lb2_depth_clear_cutout) || REXCVAR_GET(lb2_stencil_clear_cutout)) &&
++      vertex_shader->ucode_data_hash()==UINT64_C(0x1E6883FCCDE1F688)) {
+     auto& s = lb2_clear_state;
+     s.program_matches=lb2::depth_clear::ProgramMatches(vertex_shader->ucode_dwords(),vertex_shader->ucode_dword_count());
+     s.has_ps=pixel_shader!=nullptr; s.memexport=memexport_writes_possible;
+     s.query=active_occlusion_query_.valid; s.rasterized=is_rasterization_done;
+     s.half_pixel_offset=REXCVAR_GET(half_pixel_offset);
+     s.allow_depth_only_alpha=REXCVAR_GET(lb2_depth_clear_depth_only_alpha);
++    s.allow_stencil_partial=REXCVAR_GET(lb2_stencil_clear_cutout);
+     s.edram_mode=regs[XE_GPU_REG_RB_MODECONTROL];
+     s.rectangle_draw=uint32_t(primitive_processing_result.host_primitive_type)==8 &&
+       primitive_processing_result.host_draw_vertex_count==3 &&
+--- a/src/graphics/vulkan/render_target_cache.cpp
++++ b/src/graphics/vulkan/render_target_cache.cpp
+@@ -1579,6 +1579,28 @@
+                                              key.Is64bpp(),nullptr,&cutout);
+         if (covered) lb2_deferred_clear = Lb2DepthClearDefer([](void* cache) {
+           auto* rt = static_cast<VulkanRenderTargetCache*>(cache);
++          rt->PerformTransfersAndResolveClears(1+xenos::kMaxColorRenderTargets,
++            rt->last_update_accumulated_render_targets(),rt->last_update_transfers());
++        },this);
++      }
++      if (!lb2_deferred_clear && depth_and_color_render_targets[0] &&
++          !command_processor_.GetVulkanDevice()->extensions().ext_EXT_shader_stencil_export &&
++          Lb2StencilClearCutout(depth_and_color_render_targets[0]->key().key,240,
++                               draw_resolution_scale_x(),draw_resolution_scale_y()) &&
++          last_update_transfers()[0].size()==1) {
++        const Transfer& transfer=last_update_transfers()[0][0];
++        bool covered=transfer.source && transfer.source->key().key==0x00205eb6 &&
++          transfer.start_tiles==1718 && transfer.end_tiles==2048 && !transfer.host_depth_source;
++        for(unsigned i=1;i<1+xenos::kMaxColorRenderTargets;++i)
++          covered &= !depth_and_color_render_targets[i] && last_update_transfers()[i].empty();
++        const RenderTargetKey key=depth_and_color_render_targets[0]->key();
++        Transfer::Rectangle rectangles[Transfer::kMaxRectanglesWithCutout];
++        const uint32_t count=transfer.GetRectangles(key.base_tiles,key.GetPitchTiles(),
++            key.msaa_samples,key.Is64bpp(),rectangles,nullptr);
++        covered &= count==1 && rectangles[0].x_pixels==0 && rectangles[0].y_pixels==0 &&
++          rectangles[0].width_pixels==440 && rectangles[0].height_pixels==240;
++        if(covered) Lb2StencilClearDefer([](void* cache){
++          auto* rt=static_cast<VulkanRenderTargetCache*>(cache);
+           rt->PerformTransfersAndResolveClears(1+xenos::kMaxColorRenderTargets,
+             rt->last_update_accumulated_render_targets(),rt->last_update_transfers());
+         },this);
+@@ -4806,6 +4828,15 @@
+   DeferredCommandBuffer& command_buffer = command_processor_.deferred_command_buffer();
+ 
+   bool resolve_clear_needed = render_target_resolve_clear_values && resolve_clear_rectangle;
++  unsigned lb2_stencil_mode=0;
++#if REX_PLATFORM_SWITCH
++  // Only the exact Update transfer list, including its scoped fallback replay.
++  // Resolve-clear calls and unrelated aliases keep the original geometry.
++  if(!resolve_clear_needed && render_target_count==1+xenos::kMaxColorRenderTargets &&
++     render_targets==last_update_accumulated_render_targets() &&
++     render_target_transfers==last_update_transfers() && render_targets[0])
++    lb2_stencil_mode=Lb2StencilClearTransferMode(render_targets[0]->key().key);
++#endif
+   VkClearRect resolve_clear_rect;
+   if (resolve_clear_needed) {
+     // Assuming the rectangle is already clamped by the setup function from the
+@@ -4825,7 +4856,7 @@
+   // Do host depth storing for the depth destination (assuming there can be only
+   // one depth destination) where depth destination == host depth source.
+   bool host_depth_store_set_up = false;
+-  for (uint32_t i = 0; i < render_target_count; ++i) {
++  for (uint32_t i = 0; i < render_target_count && lb2_stencil_mode!=2; ++i) {
+     RenderTarget* dest_rt = render_targets[i];
+     if (!dest_rt) {
+       continue;
+@@ -5104,6 +5135,7 @@
+       new_transfer_shader_key.dest_resource_format = dest_rt_key.resource_format;
+       uint32_t stencil_clear_rectangle_count = 0;
+       for (uint32_t j = 0; j <= uint32_t(need_stencil_bit_draws); ++j) {
++        if(lb2_stencil_mode==2 && !j)continue;  // Replay stencil, preserve imported depth.
+         // j == 0 - color or depth.
+         // j == 1 - stencil bits.
+         // Stencil bit writing always requires a different root signature,
+@@ -5276,11 +5308,19 @@
+       for (auto it = current_transfer_invocations_.cbegin();
+            it != current_transfer_invocations_.cend(); ++it) {
+         const TransferInvocation& transfer_invocation_first = *it;
++        const Transfer::Rectangle* lb2_transfer_cutout=resolve_clear_rectangle;
++#if REX_PLATFORM_SWITCH
++        const Transfer::Rectangle lb2_stencil_rectangle{0,0,400,240};
++        if(lb2_stencil_mode==1 &&
++           (transfer_invocation_first.shader_key.mode==TransferMode::kDepthToStencilBit ||
++            transfer_invocation_first.shader_key.mode==TransferMode::kColorToStencilBit))
++          lb2_transfer_cutout=&lb2_stencil_rectangle;
++#endif
+         // Will be merging transfers from the same source into one mesh.
+         auto it_merged_first = it, it_merged_last = it;
+         uint32_t transfer_rectangle_count = transfer_invocation_first.transfer.GetRectangles(
+             dest_rt_key.base_tiles, dest_pitch_tiles, dest_rt_key.msaa_samples, dest_is_64bpp,
+-            nullptr, resolve_clear_rectangle);
++            nullptr, lb2_transfer_cutout);
+         for (auto it_merge = std::next(it_merged_first);
+              it_merge != current_transfer_invocations_.cend(); ++it_merge) {
+           if (!transfer_invocation_first.CanBeMergedIntoOneDraw(*it_merge)) {
+@@ -5288,7 +5328,7 @@
+           }
+           transfer_rectangle_count += it_merge->transfer.GetRectangles(
+               dest_rt_key.base_tiles, dest_pitch_tiles, dest_rt_key.msaa_samples, dest_is_64bpp,
+-              nullptr, resolve_clear_rectangle);
++              nullptr, lb2_transfer_cutout);
+           it_merged_last = it_merge;
+         }
+         assert_not_zero(transfer_rectangle_count);
+@@ -5326,7 +5366,7 @@
+           Transfer::Rectangle lb2_rectangles[Transfer::kMaxRectanglesWithCutout];
+           const uint32_t lb2_count = it_merged_first->transfer.GetRectangles(
+               dest_rt_key.base_tiles,dest_pitch_tiles,dest_rt_key.msaa_samples,dest_is_64bpp,
+-              lb2_rectangles,resolve_clear_rectangle);
++              lb2_rectangles,lb2_transfer_cutout);
+           std::array<lb2::stencil::Plan,Transfer::kMaxRectanglesWithCutout> lb2_plans{};
+           bool lb2_valid = lb2_count != 0;
+           uint64_t lb2_max_bytes = 0,lb2_total_bytes = 0;
+@@ -5399,7 +5439,7 @@
+           Transfer::Rectangle transfer_invocation_rectangles[Transfer::kMaxRectanglesWithCutout];
+           uint32_t transfer_invocation_rectangle_count = it_merged->transfer.GetRectangles(
+               dest_rt_key.base_tiles, dest_pitch_tiles, dest_rt_key.msaa_samples, dest_is_64bpp,
+-              transfer_invocation_rectangles, resolve_clear_rectangle);
++              transfer_invocation_rectangles, lb2_transfer_cutout);
+           assert_not_zero(transfer_invocation_rectangle_count);
+           for (uint32_t j = 0; j < transfer_invocation_rectangle_count; ++j) {
+             const Transfer::Rectangle& transfer_rectangle = transfer_invocation_rectangles[j];

@@ -14,7 +14,11 @@
     "repository": "https://github.com/StevensND/nfsmw-nx.git",
     "commit": "20f8dc122bf0cd95211606ebacd3fda550cb21a8",
     "sdk_license": "BSD-3-Clause per THIRD_PARTY_NOTICES.md; app is GPL-3.0",
-    "integrated": false
+    "integrated": true,
+    "full_game_build_verified": true,
+    "console_runtime_verified": false,
+    "mesa_commit": "1a8c1a66d6fd8d65f10107c4627ffc3606ba5631",
+    "graphics_backend": "xenos-vulkan-nvk"
   },
   "local_tools": {
     "cmake_pypi": "3.31.6",

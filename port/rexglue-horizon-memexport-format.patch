@@ -1,0 +1,101 @@
+diff --git a/src/graphics/pipeline/shader/spirv_translator_memexport.cpp b/src/graphics/pipeline/shader/spirv_translator_memexport.cpp
+index 14c0ea9..95775d9 100644
+--- a/src/graphics/pipeline/shader/spirv_translator_memexport.cpp
++++ b/src/graphics/pipeline/shader/spirv_translator_memexport.cpp
+@@ -19,6 +19,9 @@
+ #include <SPIRV/GLSL.std.450.h>
+ 
+ #include <rex/assert.h>
++#if REX_PLATFORM_SWITCH
++#include <lb2_memexport_format.h>
++#endif
+ #include <rex/graphics/format/ucode.h>
+ #include <rex/graphics/pipeline/shader/spirv_translator.h>
+ #include <rex/math.h>
+@@ -102,6 +105,17 @@ void SpirvShaderTranslator::ExportToMemory(uint8_t export_eM) {
+ 
+   // Swap red and blue if needed.
+   spv::Id format_info = builder_->createCompositeExtract(eA_vector, type_uint_, 2);
++  std::optional<uint32_t> constant_format;
++#if REX_PLATFORM_SWITCH
++  // The complete guarded format is encoded in the stored translation key.
++  // Startup compilation must not consult current guest register contents.
++  if (is_vertex_shader() && current_shader().ucode_data_hash() == lb2::memexport::kCopyShaderHash &&
++      current_shader().ucode_dword_count() == 84 &&
++      lb2::memexport::HasFormat(GetSpirvShaderModification().value)) {
++    constant_format = lb2::memexport::Format(GetSpirvShaderModification().value);
++    format_info = builder_->makeUintConstant(*constant_format);
++  }
++#endif
+   spv::Id swap_red_blue =
+       builder_->createBinOp(spv::OpINotEqual, type_bool_,
+                             builder_->createBinOp(spv::OpBitwiseAnd, type_uint_, format_info,
+@@ -336,8 +350,10 @@ void SpirvShaderTranslator::ExportToMemory(uint8_t export_eM) {
+   };
+ 
+   SpirvBuilder::SwitchBuilder format_switch(
+-      builder_->createTriOp(spv::OpBitFieldUExtract, type_uint_, format_info,
+-                            builder_->makeUintConstant(8), builder_->makeUintConstant(6)),
++      constant_format ? builder_->makeUintConstant((*constant_format >> 8) & 63)
++                      : builder_->createTriOp(spv::OpBitFieldUExtract, type_uint_, format_info,
++                                              builder_->makeUintConstant(8),
++                                              builder_->makeUintConstant(6)),
+       spv::SelectionControlDontFlattenMask, *builder_);
+ 
+   struct FormatCase {
+@@ -673,8 +689,10 @@ void SpirvShaderTranslator::ExportToMemory(uint8_t export_eM) {
+   }
+ 
+   // Endian-swap.
+-  spv::Id endian = builder_->createTriOp(spv::OpBitFieldUExtract, type_uint_, format_info,
+-                                         const_uint_0_, builder_->makeUintConstant(3));
++  spv::Id endian = constant_format
++                       ? builder_->makeUintConstant(*constant_format & 7)
++                       : builder_->createTriOp(spv::OpBitFieldUExtract, type_uint_, format_info,
++                                               const_uint_0_, builder_->makeUintConstant(3));
+   for_each_eM([&](uint32_t eM_index) {
+     eM_packed[eM_index] = EndianSwap128Uint4(eM_packed[eM_index], endian);
+   });
+diff --git a/src/graphics/vulkan/pipeline_cache.cpp b/src/graphics/vulkan/pipeline_cache.cpp
+index 75e9870..9869588 100644
+--- a/src/graphics/vulkan/pipeline_cache.cpp
++++ b/src/graphics/vulkan/pipeline_cache.cpp
+@@ -24,6 +24,9 @@
+ #include <fmt/format.h>
+ 
+ #include <rex/assert.h>
++#if REX_PLATFORM_SWITCH
++#include <lb2_memexport_format.h>
++#endif
+ #include <rex/cvar.h>
+ #include <rex/dbg.h>
+ #include <rex/filesystem.h>
+@@ -975,6 +978,28 @@ SpirvShaderTranslator::Modification VulkanPipelineCache::GetCurrentVertexShaderM
+       device_properties.shaderCullDistance &&
+       (shader.writes_point_size_edge_flag_kill_vertex() & 0b100) && !pa_cl_clip_cntl.vtx_kill_or);
+ 
++#if REX_PLATFORM_SWITCH
++  // LB2 copy shader: specialize the invariant eA.z packing format, keeping
++  // all address validation and memory operations in the original translator.
++  if (shader.ucode_data_hash() == lb2::memexport::kCopyShaderHash) {
++    const uint32_t* constants = &regs[XE_GPU_REG_SHADER_CONSTANT_000_X];
++    modification.value = lb2::memexport::Specialize(
++        modification.value, shader.ucode_data_hash(), uint32_t(shader.ucode_dword_count()),
++        host_vertex_shader_type == Shader::HostVertexShaderType::kVertex,
++        constants[2], constants[4], constants[255 * 4], constants[255 * 4 + 2],
++        constants[255 * 4 + 3]);
++    static uint32_t specialized_logs = 0, fallback_logs = 0;
++    uint32_t& log_count = lb2::memexport::HasFormat(modification.value)
++                              ? specialized_logs : fallback_logs;
++    if (log_count++ < 4) {
++      REXGPU_INFO("LB2 memexport format: specialized={} c0.z={:08X} c1.x={:08X} "
++                  "c255.x/z/w={:08X}/{:08X}/{:08X}",
++                  lb2::memexport::HasFormat(modification.value), constants[2], constants[4],
++                  constants[255 * 4], constants[255 * 4 + 2], constants[255 * 4 + 3]);
++    }
++  }
++#endif
++
+   return modification;
+ }
+ 

@@ -1,0 +1,69 @@
+diff --git a/src/audio/xma_context.cpp b/src/audio/xma_context.cpp
+--- a/src/audio/xma_context.cpp
++++ b/src/audio/xma_context.cpp
+@@ -636,23 +636,35 @@
+   return memory()->TranslatePhysical(next_buffer_address) + next_packet_index * kBytesPerPacket;
+ }
+ 
+-uint32_t XmaContext::GetNextPacketReadOffset(uint8_t* buffer, uint32_t next_packet_index,
+-                                             uint32_t current_input_packet_count) {
++static uint32_t FindNextPacketReadOffset(uint8_t* buffer, uint32_t& next_packet_index,
++                                       uint32_t current_input_packet_count,
++                                       uint32_t bytes_per_packet) {
++  const uint32_t bits_per_packet = bytes_per_packet * 8;
+   while (next_packet_index < current_input_packet_count) {
+-    uint8_t* next_packet = buffer + (next_packet_index * kBytesPerPacket);
++    uint8_t* next_packet = buffer + (next_packet_index * bytes_per_packet);
+     const uint32_t packet_frame_offset = xma::GetPacketFrameOffset(next_packet);
+ 
+     // The helper already includes the 32-bit header. Compare with the packet size,
+     // not with its payload: a frame can start in the last bits and continue in the
+     // next packet (Decode handles that split header).
+-    if (packet_frame_offset < kBitsPerPacket) {
+-      return (next_packet_index * kBitsPerPacket) + packet_frame_offset;
+-    }
+-    next_packet_index++;
++    if (packet_frame_offset < bits_per_packet) {
++      return (next_packet_index * bits_per_packet) + packet_frame_offset;
++    }
++    // Empty continuation packets still have an interleaved stream chain.
++    // A neighboring packet may belong to a different channel count.
++    // Match Decode's special full-packet skip (0xFF), which advances once.
++    const uint32_t skip_count = xma::GetPacketSkipCount(next_packet);
++    next_packet_index += skip_count == 0xFF ? 1 : skip_count + 1;
+   }
+ 
+   // 32 is a valid offset: the first frame of the first packet.
+   return UINT32_MAX;
++}
++
++uint32_t XmaContext::GetNextPacketReadOffset(uint8_t* buffer, uint32_t next_packet_index,
++                                          uint32_t current_input_packet_count) {
++  return FindNextPacketReadOffset(buffer, next_packet_index, current_input_packet_count,
++                                 kBytesPerPacket);
+ }
+ 
+ void XmaContext::AdvanceInputPacket(XMA_CONTEXT_DATA* data, uint32_t next_packet_index) {
+@@ -668,16 +680,16 @@
+       return;
+     }
+     if (next_packet_index < count) {
+-      const uint32_t offset = GetNextPacketReadOffset(
+-          GetCurrentInputBuffer(data), next_packet_index, count);
++      const uint32_t offset = FindNextPacketReadOffset(
++          GetCurrentInputBuffer(data), next_packet_index, count, kBytesPerPacket);
+       if (offset != UINT32_MAX) {
+         data->input_buffer_read_offset = offset;
+         return;
+       }
+-      next_packet_index = 0;
+-    } else {
+-      next_packet_index -= count;
+-    }
++    }
++    // The scanner may have crossed the boundary by more than one packet.
++    // Carry that stream-chain position into the next buffer.
++    next_packet_index -= count;
+     SwapInputBuffer(data);
+   }
+ }

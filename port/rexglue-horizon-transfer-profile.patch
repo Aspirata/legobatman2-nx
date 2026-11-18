@@ -1,0 +1,40 @@
+--- a/src/graphics/vulkan/render_target_cache.cpp
++++ b/src/graphics/vulkan/render_target_cache.cpp
+@@ -5115,6 +5115,9 @@
+         if (!transfer_rectangle_write_ptr) {
+           continue;
+         }
++#if REX_PLATFORM_SWITCH
++        uint64_t lb2_transfer_pixels = 0;
++#endif
+         for (auto it_merged = it_merged_first; it_merged <= it_merged_last; ++it_merged) {
+           Transfer::Rectangle transfer_invocation_rectangles[Transfer::kMaxRectanglesWithCutout];
+           uint32_t transfer_invocation_rectangle_count = it_merged->transfer.GetRectangles(
+@@ -5123,6 +5126,11 @@
+           assert_not_zero(transfer_invocation_rectangle_count);
+           for (uint32_t j = 0; j < transfer_invocation_rectangle_count; ++j) {
+             const Transfer::Rectangle& transfer_rectangle = transfer_invocation_rectangles[j];
++#if REX_PLATFORM_SWITCH
++            lb2_transfer_pixels += uint64_t(transfer_rectangle.width_pixels) *
++                                   transfer_rectangle.height_pixels * draw_resolution_scale_x() *
++                                   draw_resolution_scale_y();
++#endif
+             float transfer_rectangle_x0 = -1.0f + transfer_rectangle.x_pixels * pixels_to_ndc_x;
+             float transfer_rectangle_y0 = -1.0f + transfer_rectangle.y_pixels * pixels_to_ndc_y;
+             float transfer_rectangle_x1 =
+@@ -5318,7 +5326,14 @@
+ #if REX_PLATFORM_SWITCH
+             if (!RexSwitchPerfSkip(2))
+ #endif
+-            command_buffer.CmdVkDraw(transfer_vertex_count, 1, 0, 0);
++            {
++#if REX_PLATFORM_SWITCH
++              Lb2GpuProfileTransfer(transfer_shader_key.key,source_vulkan_rt.key().key,dest_rt_key.key,
++                                    uint32_t(transfer_mode_info.output),transfer_rectangle_count,
++                                    lb2_transfer_pixels);
++#endif
++              command_buffer.CmdVkDraw(transfer_vertex_count, 1, 0, 0);
++            }
+           }
+         }
+       }
